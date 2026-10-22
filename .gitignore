@@ -3,3 +3,5 @@ node_modules/
 test-results/
 dist/vendor/
 __pycache__/
+
+!third_party/speech/speech-source.tar.gz

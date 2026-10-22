@@ -1,19 +1,21 @@
+"""Real service-worker shell and Basic voice offline regression; no model download."""
 from playwright.sync_api import sync_playwright,expect
+from browser_helpers import BASE,launch
 import json
+lesson={'id':'offline','title':'Offline lesson','zhTitle':'离线课','language':'en','level':'A1','lines':[['Hello, my friend.','你好，我的朋友。','Nǐ hǎo, wǒ de péngyou.']]}
+state={'version':2,'language':'en','languageChosen':True,'lessons':[lesson],'speech':{'mode':'basic','rate':1.2}}
 with sync_playwright() as p:
- b=p.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox'])
- context=b.new_context();page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
- page.goto('http://127.0.0.1:4173/',wait_until='networkidle')
- page.evaluate('async()=>{await navigator.serviceWorker.ready;}')
- page.wait_for_function('navigator.serviceWorker.controller !== null')
- assert page.evaluate("async()=>{const cache=await caches.open('lingrove-shell-v4');return !!await cache.match('/ai-support.js?v=3')}")
- page.evaluate("async()=>{await fetch('/dictionary.json')}")
- page.wait_for_function("async()=>!!await caches.match('/dictionary.json')")
- context.set_offline(True);page.reload(wait_until='networkidle')
- expect(page.locator('h1')).to_contain_text('A little reading.')
- page.locator('a[href="#/read/coffee"]').first.click();expect(page.locator('.reader-head h1')).to_be_visible()
- result=page.evaluate("async()=>{const {lookupDictionary}=await import('/core.js');return await lookupDictionary('你好','zh')}")
- assert result and result['translation'],result
+ b=launch(p);c=b.new_context(viewport={'width':393,'height':852},is_mobile=True,has_touch=True)
+ c.add_init_script("Object.defineProperty(navigator,'gpu',{value:undefined});if(!localStorage.getItem('lingrove-lessons-v2'))localStorage.setItem('lingrove-lessons-v2',"+json.dumps(json.dumps(state))+');')
+ # Reading and speech must remain usable even when model download is unavailable.
+ c.route('**/*huggingface.co/**',lambda r:r.abort());c.route('**/*hf.co/**',lambda r:r.abort())
+ q=c.new_page();errors=[];q.on('pageerror',lambda e:errors.append(str(e)));q.goto(BASE+'#/read/offline');expect(q.locator('.lesson-heading h1')).to_have_text('Offline lesson');q.evaluate('navigator.serviceWorker.ready');q.wait_for_function('!!navigator.serviceWorker.controller');q.locator('[data-read-line="0"][data-field="1"]').click();expect(q.locator('#speech-status')).to_have_text('Finished playing.',timeout=20000)
+ urls=q.evaluate("async()=>{const c=await caches.open('lingrove-shell-v5');return(await c.keys()).map(r=>new URL(r.url).pathname+new URL(r.url).search)}")
+ for path in ['/app.js?v=5','/lessons.js?v=5','/speech.js?v=5','/speech-worker.js?v=5','/vendor/speech/espeak-ng.js','/vendor/speech/espeak-ng.data']:assert path in urls,(path,urls)
+ print('Versioned app shell and real voice runtime/data cached',flush=True)
+ c.set_offline(True);q.reload();expect(q.locator('.lesson-heading h1')).to_have_text('Offline lesson')
+ for field in (0,1):
+  q.locator('[data-read-line="0"][data-field="'+str(field)+'"]').click();expect(q.locator('#speech-status')).to_have_text('Finished playing.',timeout=15000)
+ print('Saved lesson, English audio and Mandarin audio work after offline reload',flush=True)
  assert not errors,errors
- print(json.dumps({'passed':['versioned AI modules cached','offline app reload','offline reader','offline bilingual dictionary'],'console_errors':errors}))
- b.close()
+ b.close();print(json.dumps({'passed':4,'errors':errors}))

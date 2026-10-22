@@ -1,0 +1,48 @@
+{
+  "engine": "eSpeak NG 1.52.0.1",
+  "sourceCommit": "9a550bef455f03b459f51796e3482833aab7fbc0",
+  "sourceRepository": "https://github.com/echogarden-project/espeak-ng",
+  "license": "GPL-3.0-or-later",
+  "runtime": "Emscripten 4.0.21 WebAssembly, embedded in JavaScript",
+  "selectedVoices": [
+    "en-us",
+    "cmn"
+  ],
+  "files": [
+    {
+      "name": "COPYING",
+      "bytes": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    {
+      "name": "COPYING.BSD2",
+      "bytes": 1244,
+      "sha256": "a8b0c1c7d7af6c0415c068be8cf373799d1a42b0707b79dc4ccfcaf593cd902d"
+    },
+    {
+      "name": "REBUILD.md",
+      "bytes": 2849,
+      "sha256": "a7cd326428e0816774382b8d186ca87f3dfe6b35f71a3c9e328954358e830df4"
+    },
+    {
+      "name": "build-speech.sh",
+      "bytes": 1912,
+      "sha256": "b5fdab18984a1a15883c4fa5b0045654277001233d27af902d7754edccf7d88b"
+    },
+    {
+      "name": "espeak-ng.data",
+      "bytes": 2503249,
+      "sha256": "82cd7fe3f9318ab860f11ec963f8c463d1d1c178e69b9de3036d8e845c17d567"
+    },
+    {
+      "name": "espeak-ng.js",
+      "bytes": 580670,
+      "sha256": "95d865ede35f17b6cbc5aa5eb58b4405de5c67a9c5370b178466da3fd48d18ae"
+    },
+    {
+      "name": "speech-source.tar.gz",
+      "bytes": 23993036,
+      "sha256": "94406ee0fc2586d86ae66f11a352b82991b53bbf2babd4640e2ce4fc5d87a33f"
+    }
+  ]
+}

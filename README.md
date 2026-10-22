@@ -1,6 +1,6 @@
 # Lingrove
 
-A browser-based English/Chinese reading and language practice prototype. Static hosting; no paid AI API and no server inference. New Sites publication is private to the owner.
+A small English–Chinese lesson builder. The app downloads Qwen automatically, asks which language the learner wants to practise, and opens a custom lesson prompt. No template library, tutor chat, paid AI API, or server inference is used in this interface.
 
 ## Run
 
@@ -10,61 +10,61 @@ npm run build
 python -m http.server 4173 --directory dist
 ```
 
-Open `http://localhost:4173`. Phone mode needs a modern browser with WebAssembly and a secure context (HTTPS or localhost). It runs on one CPU thread and does not require WebGPU, SharedArrayBuffer, JSPI, MEMORY64, or cross-origin isolation. The runtime automatically chooses its compatibility build when newer WASM features are absent. Application scripts, CPU WASM runtimes, fonts, images, stories, and the bilingual dictionary are served from this app. Model weights download separately from Hugging Face; the optional GPU backend also downloads its compiled model runtime.
+Open `http://localhost:4173`. Real devices require HTTPS. The app uses WebAssembly on one CPU thread; it does not require WebGPU, SharedArrayBuffer, JSPI, MEMORY64 or cross-origin isolation. Its runtime selects a compatibility build when newer WASM features are absent.
 
-## What works
+## Lesson flow
 
-- Ten original bilingual lessons, category/level filters, search and bookmarks.
-- English/Chinese reader with word lookup, sentence translations, selected-text translation, pinyin, speech synthesis, font controls, and printable worksheets.
-- CC-CEDICT with approximately 198,000 simplified/traditional lookup keys and 61,000 English reverse-lookup terms; these are dictionary entries, not unique headword counts. Context-dependent meanings are labeled.
-- Locally saved words and phrases, scheduled flashcard review, CSV export.
-- Imported English or Chinese text, safely rendered as text.
-- Four guided conversation scenes, explicitly labeled as scripted practice.
-- Recommended Phone mode: Qwen3.5 0.8B Q4_K_M through wllama/llama.cpp in a CPU worker. Optional Qwen3 0.6B or 1.7B through WebLLM uses compatible GPUs.
-- Both engines provide streaming chat, lesson generation, translation, download progress, cancellation, cache removal and recovery. Chat and lessons use explicit bilingual JSON schemas. Short worked examples guide tutor replies and translation. CPU requests evaluate a fresh supplied context, with bounded conversation history; thinking is explicitly disabled in the chat template. Pinyin is computed locally with pinyin-pro, reducing generation work and avoiding invented romanization.
-- Readiness requires a successful model reply, not just a completed download. Cached models reload after a previous successful opt-in; pending lesson and phrase requests continue after setup.
-- Model startup, generation and translation have deadlines. Worker failures show readable errors, Stop recovers from an unresponsive worker, and failed chat messages can be retried.
-- Optional Chrome Translator language packs for on-device English/Chinese translation independent of the chat model.
-- Service worker caches the app shell. Dictionary and runtime bundles cache when used. Browser eviction can remove cached data.
+- First visit starts the Qwen download immediately, as requested by the owner. Progress, pause and retry remain visible. A real test reply must pass before setup completes.
+- Choose English or Chinese, enter a topic, and create a lesson. Optional controls cover A1–B2, 4/6/8 lines, story/conversation/useful phrases, vocabulary or grammar, and additional instructions.
+- The model writes aligned English and Simplified Chinese. Pinyin is computed locally. Complete valid lessons save automatically; partial or monolingual outputs produce a retryable error.
+- The reader offers both translations, pronunciation, separate listening buttons for each language or sentence, speed controls, editing, printing and text/JSON downloads.
+- Saved lessons support search, backups, import and deletion. Existing custom lessons migrate from the earlier app without deleting its old localStorage data.
+- If storage fails, a generated lesson stays in memory, is marked unsaved, and can be downloaded before closing. Backups are the way to move lessons between devices; there is no account or automatic synchronization.
 
-## Cost and distribution
+New lesson data is stored under `lingrove-lessons-v2`; model preferences remain under `lingrove-local-ai`. A service worker caches the shell and used runtime assets. Saved lessons and the Basic voice can work offline after their files have loaded. Browser storage eviction or clearing browser data can remove lessons and downloaded assets.
 
-There is no per-token backend bill: inference runs on the learner's hardware. Hosting, bandwidth, device memory, battery and download/storage costs still exist. Phone mode downloads 532,517,120 bytes of model weights, plus the self-hosted runtime (approximately 9 MB, or 16 MB for the compatibility build). Its GGUF cache is separate from older WebLLM downloads. The GPU 0.6B model's weight shards total about 335 MB; the 1.7B shards about 968 MB, plus tokenizer and runtime files. The interface rounds up for planning. Memory allocation depends on the engine and device.
+## Local AI
 
-Phone model source is pinned to revision `6ab461498e2023f6e3c1baea90a8f0fe38ab64d0` of `unsloth/Qwen3.5-0.8B-GGUF`, file `Qwen3.5-0.8B-Q4_K_M.gguf`; published SHA-256 is `bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517`. The runtime reuses complete cached files and honors download cancellation. Phone mode is the default for new users. Old GPU preferences without the new backend metadata are ignored on mobile, so returning phone users are offered the new mode; an explicit new GPU choice is remembered.
+Phone mode uses Qwen3.5 0.8B Q4_K_M through wllama/llama.cpp, with explicit bilingual JSON schemas, thinking disabled, and fresh supplied context for each request. Weights are pinned to revision `6ab461498e2023f6e3c1baea90a8f0fe38ab64d0` of `unsloth/Qwen3.5-0.8B-GGUF`, file `Qwen3.5-0.8B-Q4_K_M.gguf`.
 
-This preview is not a verified mainland-China deployment. Hugging Face, GitHub, Google language-pack downloads, and the hosted preview itself may be unreachable there. Before a school rollout, test on the actual network and devices; host licensed model weights and compiled WASM on a reachable origin with CORS, update the Phone model URL in `src/cpu.js` and the WebLLM `appConfig.model_list` model and model_lib URLs, and test first download, cached startup and storage eviction. Do not use a paid cloud endpoint as a silent fallback. Model licenses must travel with redistributed assets.
+The model is 532,517,120 bytes; published SHA-256 is `bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517`. The self-hosted CPU runtime adds approximately 9 MB, or 16 MB for the compatibility build. The UI rounds this to about 550 MB for first-visit planning. Cached complete model files are reused. Downloads, readiness and generation have deadlines; Stop interrupts work, and errors release the form for retry.
 
-Small models can produce incorrect Chinese or translations, and dictionary-based pinyin can still misread ambiguous characters. Original lessons remain available without a model. Teacher review is appropriate before distributing generated classroom material. Unsupported devices receive an actionable error and retain the library, dictionary and guided practice. Browsers can suspend work in background tabs, and some phones may not have enough free memory; keep the tab open during generation. Browser translation availability is checked by the browser. Speech may use a network-backed system voice if an installed local voice is unavailable.
+Inference has no per-token API charge. Device memory, storage, battery, hosting and bandwidth still have costs. Small models can make grammatical or translation errors and may not follow every customization perfectly; users can edit every line. The UI asks for review before teaching. Four-line lessons are the quickest option.
 
-## Data and privacy
+Model downloads come from Hugging Face, which may be unavailable on a mainland-China network. Before a classroom rollout, verify the actual network and phones. A licensed model mirror on a reachable origin can be configured in `src/cpu.js`. No paid cloud fallback is used. Browsers may suspend long tasks in the background; keep the page open during setup and generation.
 
-Learning data is in localStorage under `lingrove-v1`, and the last successfully loaded model is remembered under `lingrove-local-ai`; model artifacts are managed by wllama’s browser storage and WebLLM browser caches. No analytics, hosted prompts, accounts within the app, cross-device sync or billing. Sites provides private hosting access. CSV exports neutralize formula prefixes. Imported text and model output use escaped text rendering.
+## Speech
+
+Automatic speech prefers a matching installed English or Mandarin device voice. Voices are refreshed when the browser announces them, the active utterance is retained, and text is broken into short chunks. Missing, failed or nonstarting device voices fall back to Basic voice. A user can explicitly select Basic voice if a device voice reports playback but remains inaudible.
+
+Basic voice is a locally synthesized eSpeak NG voice, built from exact pinned source with only English and Mandarin data. It sounds robotic but needs no installed phone voices, speech API or network speech provider. Playback uses WebAudio, unlocked during the user's original tap. Stop cancels pending and active playback; old callbacks cannot restart it. Suspended browser audio and failed downloads show visible errors. Device voices themselves may use a phone's network speech provider.
+
+The Basic voice JavaScript/embedded WASM is 580,670 bytes and its data is 2,503,249 bytes, approximately 3.1 MB uncompressed (1.22 MB gzip together). Files are fetched only when needed and cached for subsequent offline listening. Its own runtime memory is approximately 17 MB. A phone's volume, output routing and browser policies still control physical audibility.
+
+Pinned source is `echogarden-project/espeak-ng` commit `9a550bef455f03b459f51796e3482833aab7fbc0` (eSpeak NG 1.52.0.1), built with Emscripten 4.0.21. `third_party/speech/` includes the exact runtime, corresponding source archive, dependency source, notices, build recipe, SDK digest and SHA-256 manifest. The build verifies all delivered hashes and copies these files to `dist/vendor/speech/`. The app links to the GPL-3.0-or-later notice and full corresponding source. See `third_party/speech/REBUILD.md` to compile from source. These assets are not copied from an untraceable npm binary.
 
 ## Validation
 
-`npm test` validates bilingual corpus alignment, dictionary mappings, Chinese segmentation, model-response validation, review scheduling and safe rendering/export helpers. It also exercises the actual WebLLM worker-client error protocol, explicit JSON schemas, generation deadlines, cancellation of active/queued work, empty responses and interruption recovery. The underlying GPU worker is replaced with controlled responses in these regression tests.
+With the local server running:
 
-`python tests/browser.py` uses the environment's installed Playwright and Chromium against port 4173. It checks search/filter/bookmark flows, both translation directions, saving and persistence, flashcards, guided chat, text import, unsupported GPU handling, dictionary lookup and mobile layout. Generated lesson and streaming chat UI are exercised with deterministic mock engines.
+```sh
+npm test
+python tests/browser.py
+python tests/speech-browser.py
+python tests/cache-browser.py
+LINGROVE_REAL_MODEL=1 LINGROVE_TEST_COMPAT=1 python tests/phone-real-browser.py
+```
 
-`python tests/ai-browser.py` reproduces string errors from the real worker-client protocol in the UI and checks failed lesson recovery, stalled requests, Stop, Retry, structured lessons, readiness gating, setup cancellation, and continuing lesson/phrase requests after successful CPU setup with no GPU. Model responses are controlled fixtures; these tests do not prove inference quality or hardware compatibility.
+The Python suites use installed Playwright and `/usr/bin/chromium`.
 
-`python tests/cache-browser.py` verifies that the versioned AI modules are cached and that the app, reader and downloaded dictionary reload offline.
+- Unit checks cover AI worker failures, schema requests, deadlines, cancellation/recovery, readiness, lesson migration, storage failures, import/export, output validation and speech language selection/chunking.
+- Browser UI checks use controlled AI fixtures for automatic setup, customization, autosave, editing, backups, safe rendering, mobile layout, failed download/generation, Stop/retry and legacy data migration.
+- Speech tests use the real compiled speech runtime and WebAudio playback for English and Mandarin. They measure nonzero PCM and completed playback, test Stop, speed controls, missing/failed/stalled native voice fallback and blocked audio activation. Native-provider callbacks are controlled where testing failure paths.
+- Offline checks load the real voice, disconnect the browser, reload a saved lesson, and play English and Mandarin again.
+- The opt-in real-model test uses a persistent browser profile, no GPU, disabled JSPI when requested, an Android user agent and a 393px viewport. It checks actual Qwen startup/readiness, a schema-constrained custom lesson, pinyin, autosave and offline reading. It may download the approximately 533 MB model once. It is phone browser emulation, not a physical Android/iPhone speaker or performance test, and does not establish general translation accuracy.
 
-`LINGROVE_REAL_MODEL=1 LINGROVE_TEST_COMPAT=1 python tests/phone-real-browser.py` is the opt-in real-model test. It downloads approximately 533 MB once into a persistent test profile and runs without a GPU, JSPI or cross-origin isolation. It covers actual model readiness, bilingual chat with a useful tea-ordering phrase, English-to-Chinese and Chinese-to-English translation, a schema-constrained lesson, interruption and offline cached startup. Basic meaning checks supplement language and schema checks; they do not establish general translation accuracy. It uses a mobile viewport and Android user agent; it is **not** a physical phone benchmark. The compatibility runtime has produced real Qwen3.5 replies in this environment. A separate initial runtime smoke test used a smaller model.
+## Licenses and publication
 
-The execution environment has no physical GPU. The earlier WebLLM Qwen3 q4f32 check downloaded successfully but did not generate a reply using a software SwiftShader adapter. Successful inference on physical Android/iPhone hardware, browser-native language pack downloads, system speech voices and mainland-China access still require device/network testing.
+Qwen3.5 and WebLLM are Apache-2.0. wllama, llama.cpp and pinyin-pro use MIT; notices are under `dist/licenses/`. DM Sans is SIL Open Font License. Basic voice is GPL-3.0-or-later with exact source and rebuilding instructions provided alongside the runtime. The leaf illustration was created for Lingrove.
 
-The deployed private URL was also checked in Chromium with the existing Sites authorization token: its library and AI device detection loaded without browser exceptions. Hosting returned HTTPS successfully, with no restrictive CSP/Permissions-Policy response headers and no recent server error logs.
-
-The October 2026 repair includes a serialized JSON schema for WebLLM 0.2.85 lesson generation. Its grammar compiler rejects the previous `json_object` request with no schema. WebLLM worker errors can arrive as strings, so all AI boundaries now normalize them before displaying their messages. Updated script URLs and a new service-worker cache version prevent stale AI modules from being reused after this release.
-
-The phone update replaces the fragile eight-token readiness check with a 64-token check. WebLLM inserts four hidden Qwen3 thinking-control tokens even with thinking disabled, so the old budget allowed only four generated tokens. A completed empty reply is retried once within one shared deadline. Cancellation, crashes and timeouts do not retry a broken worker. Readiness diagnostics retain only token counts, finish reason and text lengths in memory. They do not retain prompt/reply text or send telemetry.
-
-## Dictionary and assets
-
-The distributed adapted dictionary is CC BY-SA 4.0. See `dist/DICTIONARY-LICENSE.txt`. Rebuild using `python scripts/build-dictionary.py [optional-cedict-gzip-path]`; without an argument it downloads the current CC-CEDICT export. Keep the bundled dictionary in source control so rebuilding the app does not depend on an external dictionary download.
-
-WebLLM, Qwen3 and Qwen3.5 0.8B are Apache-2.0. wllama, llama.cpp and pinyin-pro are MIT; notices are bundled under `dist/licenses/`. DM Sans is distributed under the SIL Open Font License. Photos are from Unsplash. The tea illustration and application lessons were created for Lingrove.
-
-The Sites helper scripts were unavailable in this execution environment. The same source/manifest/archive publication contract is followed with an authenticated Git push and a tar archive containing `.openai/hosting.json` and `dist/` from that source state.
+The Sites helper scripts are unavailable in this environment. Publication follows the same exact-source contract using authenticated Git push and a tar archive containing `.openai/hosting.json` and `dist/`, followed by native Sites save/deploy. The existing hosting audience is preserved.

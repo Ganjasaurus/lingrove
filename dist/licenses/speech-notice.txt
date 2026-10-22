@@ -1,0 +1,27 @@
+Lingrove Basic voice: English and Mandarin speech on your device
+
+Engine: eSpeak NG 1.52.0.1, GPL-3.0-or-later.
+Source: https://github.com/echogarden-project/espeak-ng
+Pinned commit: 9a550bef455f03b459f51796e3482833aab7fbc0
+
+This application ships a build from that exact source, using Emscripten 4.0.21.
+Only English and Mandarin language data is selected; original upstream source
+files are not modified. The original copyright and license notices are retained.
+
+The complete corresponding source, dependency source, build script, exact
+compiler image identifier and notices are available on this same site:
+
+/vendor/speech/speech-source.tar.gz
+/vendor/speech/REBUILD.md
+/vendor/speech/build-speech.sh
+/vendor/speech/COPYING
+/vendor/speech/COPYING.BSD2
+/vendor/speech/provenance.json
+
+The source archive is approximately 24 MB. It is a source-code download, not
+required to listen. The playback runtime and English/Mandarin data together
+are approximately 3.1 MB and are downloaded when Basic voice is first used.
+
+This free software comes WITHOUT ANY WARRANTY, including implied warranties
+of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See COPYING for the
+full GNU General Public License version 3 and your redistribution rights.
