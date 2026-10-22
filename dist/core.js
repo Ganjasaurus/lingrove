@@ -27,7 +27,7 @@ export function segment(text,lang){
 export function parseGeneratedLesson(raw,{topic,level,id=crypto.randomUUID()}={}){
   let cleaned=raw.replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,'').trim();
   const first=cleaned.indexOf('{'),last=cleaned.lastIndexOf('}');
-  if(first<0||last<first)throw new Error('The model did not finish a bilingual lesson. Try a simpler topic or the 1.7B model.');
+  if(first<0||last<first)throw new Error('The model did not finish a bilingual lesson. Try a shorter lesson or a simpler topic.');
   let data;try{data=JSON.parse(cleaned.slice(first,last+1))}catch{throw new Error('The lesson was incomplete. Try again with a shorter topic.');}
   const lines=data.lines;
   if(!Array.isArray(lines)||lines.length<2||lines.length>12)throw new Error('The model did not return enough bilingual sentences. Please try again.');

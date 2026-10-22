@@ -10,3 +10,14 @@
 /* Keep small learning controls readable and secondary copy comfortably contrasted. */
 .intro p,.section-top p,.card-body p,.page-subtitle{color:#6d7966}.stat small,.hero-meta,.reader-meta,.card-footer,.form-note,.lookup-source{color:#718063}.card-body p{font-size:12px}.card-footer{font-size:10px}.card-category{font-size:9px;color:#8a7353}.chip{font-size:11px}.hero p{font-size:13px;color:#68765c}.intro p{font-size:13px}.nav-caption{font-size:9px;letter-spacing:1.5px}.nav-link{font-size:13px}.lookup-hint,.note-card p{color:#6f815d!important}.lookup-label{color:#708858}.sentence-translate{opacity:.8}.tabs button{display:flex;align-items:center;justify-content:center;gap:7px}.tabs .icon{width:15px;height:15px}.chip .icon{width:12px;height:12px;vertical-align:-2px;margin-right:4px}.chat-bubble>.icon-button{display:block;width:25px;height:25px;margin-top:5px}.chat-bubble .icon-button .icon{width:14px;height:14px}.phrase-card button .icon{width:12px;height:12px;vertical-align:-2px;margin-right:3px}
 @media(max-width:760px){.chip{font-size:10px}.hero p{font-size:11px}.intro p{font-size:12px}.card-body p{font-size:11px}.nav-caption{font-size:10px}.stat small{font-size:9px}}
+/* Keep setup usable within a phone's browser chrome and touch viewport. */
+.modal{max-height:calc(100dvh - 28px);overscroll-behavior:contain;scroll-padding-top:65px}
+.modal-header{position:sticky;top:-1px;z-index:2;background:#fdfdf7;padding:8px 0 12px;margin-top:-8px}
+.modal-header .icon-button{min-width:44px;min-height:44px}
+.phone-model{border-color:#90ad90;background:#edf3e7}
+.phone-model strong{font-weight:600}
+.ai-advanced{margin:18px 0;color:#65765b;font-size:12px}
+.ai-advanced summary{cursor:pointer;padding:9px 0;min-height:38px}
+.ai-advanced[open] summary{margin-bottom:10px}
+.ai-advanced p{margin:10px 0}
+@media(max-width:600px){.modal{padding:18px;width:calc(100% - 24px)}.modal-header h2{font-size:25px}.model-option strong{font-size:14px}.model-option small{font-size:12px}.modal p{font-size:13px}.download-controls>.button{min-height:46px}.model-option input{min-width:19px;min-height:19px}.chat-compose textarea{font-size:16px}.chat-suggestions .hint-short{display:inline;font-size:11px}}

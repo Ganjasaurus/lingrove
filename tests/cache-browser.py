@@ -6,7 +6,7 @@ with sync_playwright() as p:
  page.goto('http://127.0.0.1:4173/',wait_until='networkidle')
  page.evaluate('async()=>{await navigator.serviceWorker.ready;}')
  page.wait_for_function('navigator.serviceWorker.controller !== null')
- assert page.evaluate("async()=>{const cache=await caches.open('lingrove-shell-v3');return !!await cache.match('/ai-support.js?v=2')}")
+ assert page.evaluate("async()=>{const cache=await caches.open('lingrove-shell-v4');return !!await cache.match('/ai-support.js?v=3')}")
  page.evaluate("async()=>{await fetch('/dictionary.json')}")
  page.wait_for_function("async()=>!!await caches.match('/dictionary.json')")
  context.set_offline(True);page.reload(wait_until='networkidle')
