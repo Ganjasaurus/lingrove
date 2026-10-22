@@ -14,7 +14,7 @@ Open `http://localhost:4173`. Real devices require HTTPS. The app uses WebAssemb
 
 ## Lesson flow
 
-- First visit starts the Qwen download immediately, as requested by the owner. Progress, pause and retry remain visible. A real test reply must pass before setup completes.
+- First visit starts setup automatically, as requested by the owner. Before a new model download, a small worker checks real file write/read/flush/close access and deletes its own temporary file. Already cached models can load without this new-write probe. Progress, pause and retry remain visible. A real test reply must pass before setup completes.
 - Choose English or Chinese, enter a topic, and create a lesson. Optional controls cover A1–B2, 4/6/8 lines, story/conversation/useful phrases, vocabulary or grammar, and additional instructions.
 - The model writes aligned English and Simplified Chinese. Pinyin is computed locally. Complete valid lessons save automatically; partial or monolingual outputs produce a retryable error.
 - The reader offers both translations, pronunciation, separate listening buttons for each language or sentence, speed controls, editing, printing and text/JSON downloads.
@@ -27,11 +27,13 @@ New lesson data is stored under `lingrove-lessons-v2`; model preferences remain 
 
 Phone mode uses Qwen3.5 0.8B Q4_K_M through wllama/llama.cpp, with explicit bilingual JSON schemas, thinking disabled, and fresh supplied context for each request. Weights are pinned to revision `6ab461498e2023f6e3c1baea90a8f0fe38ab64d0` of `unsloth/Qwen3.5-0.8B-GGUF`, file `Qwen3.5-0.8B-Q4_K_M.gguf`.
 
-The model is 532,517,120 bytes; published SHA-256 is `bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517`. The self-hosted CPU runtime adds approximately 9 MB, or 16 MB for the compatibility build. The UI rounds this to about 550 MB for first-visit planning. Cached complete model files are reused. Downloads, readiness and generation have deadlines; Stop interrupts work, and errors release the form for retry.
+The model is 532,517,120 bytes; published SHA-256 is `bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517`. The self-hosted CPU runtime adds approximately 9 MB, or 16 MB for the compatibility build. The UI rounds this to about 550 MB for first-visit planning. Some iOS in-app browsers expose storage APIs but refuse file access. Setup reports the failed stage and offers a Safari copy-link path, rather than presenting WebKit’s generic UnknownError as proof of exhausted RAM. Saved lessons and backup import remain accessible. Clipboard denial reveals a selectable URL. Cached complete model files are reused. Downloads, storage preflight, readiness and generation have deadlines; Stop interrupts work, and errors release the form for retry.
 
 Inference has no per-token API charge. Device memory, storage, battery, hosting and bandwidth still have costs. Small models can make grammatical or translation errors and may not follow every customization perfectly; users can edit every line. The UI asks for review before teaching. Four-line lessons are the quickest option.
 
 Model downloads come from Hugging Face, which may be unavailable on a mainland-China network. Before a classroom rollout, verify the actual network and phones. A licensed model mirror on a reachable origin can be configured in `src/cpu.js`. No paid cloud fallback is used. Browsers may suspend long tasks in the background; keep the page open during setup and generation.
+
+The build applies a narrow, source-hash-guarded patch to wllama 3.8.1 (`scripts/patch-wllama-381.mjs`). Failed OPFS opening/closing terminates its worker; flush failures still close sync handles. Blob worker URLs are released after startup or termination, including constructor failure. The patch preserves inference behavior and fails closed on dependency upgrades. Fault-injection tests exercise the actual patched cache manager and embedded worker.
 
 ## Speech
 
@@ -50,6 +52,7 @@ With the local server running:
 ```sh
 npm test
 python tests/browser.py
+python tests/setup-browser.py
 python tests/speech-browser.py
 python tests/cache-browser.py
 LINGROVE_REAL_MODEL=1 LINGROVE_TEST_COMPAT=1 python tests/phone-real-browser.py
@@ -58,6 +61,7 @@ LINGROVE_REAL_MODEL=1 LINGROVE_TEST_COMPAT=1 python tests/phone-real-browser.py
 The Python suites use installed Playwright and `/usr/bin/chromium`.
 
 - Unit checks cover AI worker failures, schema requests, deadlines, cancellation/recovery, readiness, lesson migration, storage failures, import/export, output validation and speech language selection/chunking.
+- Setup regressions reproduce the exact reported iOS exception against the real CPU adapter and verify that no model download occurs after storage failure, that a real four-byte OPFS probe cleans up, and that Safari/clipboard recovery remains usable.
 - Browser UI checks use controlled AI fixtures for automatic setup, customization, autosave, editing, backups, safe rendering, mobile layout, failed download/generation, Stop/retry and legacy data migration.
 - Speech tests use the real compiled speech runtime and WebAudio playback for English and Mandarin. They measure nonzero PCM and completed playback, test Stop, speed controls, missing/failed/stalled native voice fallback and blocked audio activation. Native-provider callbacks are controlled where testing failure paths.
 - Offline checks load the real voice, disconnect the browser, reload a saved lesson, and play English and Mandarin again.

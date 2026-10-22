@@ -55,7 +55,7 @@ function resetWorker(error){
 }
 function synthesize(item,rate,signal){
   if(!worker){
-    worker=new Worker(new URL('./speech-worker.js?v=5',import.meta.url),{type:'module'});
+    worker=new Worker(new URL('./speech-worker.js?v=6',import.meta.url),{type:'module'});
     worker.onmessage=({data})=>{const entry=pending.get(data.id);if(!entry)return;pending.delete(data.id);entry.cleanup();data.error?entry.reject(new Error(data.error)):entry.resolve(data)};
     worker.onerror=e=>{e.preventDefault();resetWorker(new Error('The basic voice could not load. Reconnect and try Listen again.'))};
     worker.onmessageerror=()=>resetWorker(new Error('The basic voice returned unreadable audio. Try again.'));

@@ -1,4 +1,5 @@
 import {Wllama} from '@wllama/wllama/esm/index.js';
+import {checkModelStorage} from './phone-support.js';
 
 // Immutable, Apache-2.0 quantization. No prompts leave the browser.
 export const PHONE_MODEL={
@@ -16,7 +17,7 @@ export async function hasPhoneModel(){
 }
 export async function removePhoneModel(){await runtime().cacheManager.delete(PHONE_MODEL.url)}
 export function createPhoneEngine(){
-  const instance=runtime();let requestController=null;
+  let instance=null,requestController=null;
   const create=async request=>{
     const controller=new AbortController();requestController=controller;
     const {extra_body,response_format,...options}=request;
@@ -29,15 +30,28 @@ export function createPhoneEngine(){
   };
   return {
     chat:{completions:{create}},
-    async load({signal,onProgress}){
-      const model=await instance.modelManager.getModelOrDownload({url:PHONE_MODEL.url},{signal,progressCallback:onProgress});
+    async load({signal,onProgress,onPhase=()=>{}}){
+      let model;
+      onPhase({phase:'storage',text:'Checking browser storage…'});
+      try{
+        instance=runtime();
+        model=(await instance.modelManager.getModels()).find(m=>m.url===PHONE_MODEL.url);
+        // Complete cached models remain usable without testing a new write.
+        if(!model)await checkModelStorage({signal});
+      }catch(error){if(signal?.aborted)throw signal.reason;const tagged=error instanceof Error?error:new Error(error?.message||String(error));tagged.stage='storage';throw tagged}
       if(signal?.aborted)throw signal.reason;
+      if(!model){
+        onPhase({phase:'download',text:'Downloading Qwen. Keep this page open.'});
+        model=await instance.modelManager.downloadModel({url:PHONE_MODEL.url},{signal,progressCallback:onProgress});
+      }
+      if(signal?.aborted)throw signal.reason;
+      onPhase({phase:'loading',text:'Model files ready. Loading Qwen into memory…'});
       await instance.loadModel(model,{n_gpu_layers:0,n_threads:1,n_ctx:2048,n_batch:128,n_ubatch:64,n_parallel:1,warmup:false,default_template_kwargs:{enable_thinking:false}});
       if(signal?.aborted){await instance.exit();throw signal.reason}
     },
     // Every request evaluates its supplied context; no previous task's prompt is reused.
     async resetChat(){},
     interruptGenerate(){requestController?.abort()},
-    dispose(){requestController?.abort();void instance.exit().catch(()=>{})},
+    dispose(){requestController?.abort();void instance?.exit().catch(()=>{})},
   };
 }

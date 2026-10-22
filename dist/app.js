@@ -1,8 +1,9 @@
-import {ai,subscribeAI,enableAI,cancelAI,complete,stopGeneration,normalizeAIError} from './ai.js?v=5';
-import {lessonSchema} from './ai-support.js?v=5';
-import {pinyinFor} from './vendor/language.js?v=5';
-import {LessonStore,escapeHTML as esc,cleanSpec,parseLesson,lessonMessages,lessonText,backup} from './lessons.js?v=5';
-import {speech,playSpeech,stopSpeech,subscribeSpeech} from './speech.js?v=5';
+import {ai,subscribeAI,enableAI,cancelAI,complete,stopGeneration,normalizeAIError} from './ai.js?v=6';
+import {lessonSchema} from './ai-support.js?v=6';
+import {pinyinFor} from './vendor/language.js?v=6';
+import {LessonStore,escapeHTML as esc,cleanSpec,parseLesson,lessonMessages,lessonText,backup} from './lessons.js?v=6';
+import {speech,playSpeech,stopSpeech,subscribeSpeech} from './speech.js?v=6';
+import {isAppleMobile} from './setup-support.js?v=6';
 
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const paths={arrow:'M4 12h16m-6-6 6 6-6 6',back:'M20 12H4m6-6-6 6 6 6',spark:'m12 3 2.7 6.3L21 12l-6.3 2.7L12 21l-2.7-6.3L3 12l6.3-2.7L12 3Z',sound:'M11 4 6 8H2v8h4l5 4V4Z M15 8a6 6 0 0 1 0 8 M18 5a10 10 0 0 1 0 14',stop:'M6 6h12v12H6Z',check:'m5 12 4 4L19 6',download:'M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5',book:'M12 5v15M12 5C8 2 3 4 3 4v15s5-2 9 1c4-3 9-1 9-1V4s-5-2-9 1Z',plus:'M12 5v14M5 12h14',close:'m6 6 12 12M6 18 18 6',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',globe:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z'};
@@ -49,7 +50,7 @@ async function generateLesson(){
   if(busy||!draft.topic.trim())return;
   stopSpeech();const spec=cleanSpec(draft),target=language;genError='';busy=true;genStarted=Date.now();generatedChars=0;renderCreate();
   try{
-    if(ai.status!=='ready'){const ready=await startSetup();if(!ready||wasCancelled)throw new Error('Download paused or unavailable. Your lesson prompt is kept; retry when you’re ready.')}
+    if(ai.status!=='ready'){const ready=await startSetup();if(!ready||wasCancelled)throw new Error(ai.error||'Download paused or unavailable. Your lesson prompt is kept; retry when you’re ready.')}
     const raw=await complete(lessonMessages(spec,target),{json:true,schema:lessonSchema(spec.length),temperature:.55,max_tokens:spec.length===8?1600:spec.length===6?1300:950,totalTimeoutMs:spec.length===8?420000:300000,onToken:text=>{generatedChars=text.length;updateGeneration()}});
     const lesson=parseLesson(raw,{spec,language:target});lesson.lines=lesson.lines.map(line=>[line[0],line[1],pinyinFor(line[1])]);
     try{library.save(lesson)}catch(error){unsaved.set(lesson.id,lesson);toast(error.message)}
@@ -90,13 +91,22 @@ function audioSettings(){
 function settings(){modal('Just the essentials.',`<div class="settings-list"><button class="button secondary" data-action="audio-settings">${icon('sound')}Voice & speed</button><button class="button secondary" data-action="open-setup">${icon('download')}Qwen download & status</button><button class="button secondary" data-action="choose-language">${icon('globe')}Choose learning language</button></div><p>Lessons are saved only in this browser. Download backups from Saved lessons.</p><p class="form-note">Qwen runs on your device; your prompts aren’t sent to an AI service. Model files come from Hugging Face. Download access in mainland China may vary. Device speech may use your phone’s speech provider; the basic voice runs here.</p><p class="form-note"><a href="/licenses/Qwen3.5-Apache-2.0.txt" target="_blank">Qwen licence</a> · <a href="/licenses/speech-notice.txt" target="_blank">Basic voice licence</a> · <a href="/vendor/speech/speech-source.tar.gz" download>Voice source code</a></p>`)}
 function updateAI(){
   const progress=$('#setup-progress'),actions=$('#setup-actions');
-  if(progress){progress.innerHTML=ai.status==='error'?`<div class="error" role="alert">${esc(ai.error)}</div>`:ai.status==='ready'?`<p class="ready">${icon('check')}Qwen is ready.</p>`:ai.status==='loading'?`<progress max="1" value="${ai.progress}" aria-label="Qwen download progress"></progress><strong>${ai.phase==='verifying'?'Checking a first reply…':Math.round(ai.progress*100)+'%'}</strong><p>${esc(ai.text)}</p>`:'<p>Download paused. Your saved lessons are still available.</p>';
-    actions.innerHTML=ai.status==='loading'?'<button class="button secondary" data-action="cancel-setup">Pause download</button>':`<button class="button primary" data-action="${ai.status==='ready'?'setup-next':'retry-setup'}">${ai.status==='ready'?'Continue':ai.status==='error'?'Retry download':'Resume download'}${icon('arrow')}</button>`;
-    if(allLessons().length)actions.insertAdjacentHTML('beforeend','<button class="text-button" data-nav="saved">Open saved lessons</button>');
+  const browserHelp=ai.status==='error'&&ai.recovery==='browser';
+  if(progress){
+    const label=ai.phase==='verifying'?'Checking a first reply…':ai.phase==='storage'?'Checking storage…':ai.phase==='loading'?'Loading Qwen…':Math.round(ai.progress*100)+'%';
+    progress.innerHTML=ai.status==='error'?`<div class="error" role="alert">${esc(ai.error)}</div>${browserHelp?`<p class="browser-help">${isAppleMobile()?'Use Share → Open in Safari. If it isn’t listed, copy the link and paste it into Safari.':'Copy the link and open it directly in your browser, outside this app’s preview.'}</p>`:''}`:ai.status==='ready'?`<p class="ready">${icon('check')}Qwen is ready.</p>`:ai.status==='loading'?`<progress max="1" value="${ai.progress}" aria-label="Qwen download progress"></progress><strong>${label}</strong><p>${esc(ai.text)}</p>`:'<p>Download paused. Your saved lessons are still available.</p>';
+    actions.innerHTML=ai.status==='loading'?'<button class="button secondary" data-action="cancel-setup">Pause download</button>':browserHelp?'<button class="button primary" data-action="copy-app-link">Copy link to open in browser</button><button class="button secondary" data-action="retry-setup">Retry here</button>':`<button class="button primary" data-action="${ai.status==='ready'?'setup-next':'retry-setup'}">${ai.status==='ready'?'Continue':ai.status==='error'?'Retry download':'Resume download'}${icon('arrow')}</button>`;
+    if(ai.status!=='loading'||allLessons().length)actions.insertAdjacentHTML('beforeend','<button class="text-button" data-nav="saved">Open saved lessons</button>');
   }
-  const notice=$('#ai-notice');if(notice)notice.innerHTML=ai.status==='ready'?`<span class="ready-dot"></span>Qwen is ready`:(ai.status==='loading'?`<span class="spinner small"></span>${esc(ai.phase==='verifying'?'Checking Qwen…':ai.text)}`:`${icon('download')} ${ai.status==='error'?'Qwen needs to reload.':'Qwen will load when you create your lesson.'}`);
+  const notice=$('#ai-notice');if(notice)notice.innerHTML=ai.status==='ready'?`<span class="ready-dot"></span>Qwen is ready`:(ai.status==='loading'?`<span class="spinner small"></span>${esc(ai.phase==='verifying'?'Checking Qwen…':ai.text)}`:ai.status==='error'?'<button type="button" class="text-button" data-action="open-setup">Qwen setup needs attention — view help</button>':`${icon('download')} Qwen will load when you create your lesson.`);
   updateGeneration();
 }
+async function copyAppLink(){
+  const url=new URL('/',location.href).href;
+  try{await navigator.clipboard.writeText(url);toast(isAppleMobile()?'Link copied. Paste it into Safari.':'Link copied. Paste it into your browser.')}
+  catch{modal('Open in your browser.',`<p>Copy this link and paste it into ${isAppleMobile()?'Safari':'your browser'}.</p><input id="browser-link" aria-label="App link" readonly value="${esc(url)}">`);$('#browser-link').focus();$('#browser-link').select();$('#browser-link').setSelectionRange(0,url.length)}
+}
+
 function read(items,key){if(speech.key===key&&speech.status!=='idle'&&speech.status!=='error'){stopSpeech();return}playSpeech(items,{...speechSettings,key})}
 function updateSpeech(){
   for(const el of $$('#speech-status,#modal-speech-status')){el.textContent=speech.message||'';el.classList.toggle('error',speech.status==='error')}
@@ -116,6 +126,7 @@ document.addEventListener('click',e=>{
   if(el.dataset.testVoice){const lang=el.dataset.testVoice;read([{text:lang==='zh'?'你好！我们一起学习中文。':'Hello! Let’s learn something new.',lang}],el.dataset.speechKey);return}
   const l=current();switch(el.dataset.action){
     case 'settings':settings();break;
+    case 'copy-app-link':copyAppLink();break;
     case 'audio-settings':audioSettings();break;
     case 'close-modal':$('#modal').close();break;
     case 'open-setup':$('#modal').close();navigate('setup');break;

@@ -1,6 +1,7 @@
-import {normalizeAIError,waitForAI,lessonSchema,cleanOutput,verifyAIReady} from './ai-support.js?v=5';
+import {normalizeAIError,waitForAI,lessonSchema,cleanOutput,verifyAIReady} from './ai-support.js?v=6';
+import {describeSetupFailure} from './setup-support.js?v=6';
 export {normalizeAIError,cleanOutput};
-export const ai={status:'idle',phase:'idle',text:'Local AI is optional',progress:0,model:null,engine:null,worker:null,native:new Map(),error:null,busy:false,backend:null,diagnostic:null};
+export const ai={status:'idle',phase:'idle',text:'Local AI is optional',progress:0,model:null,engine:null,worker:null,native:new Map(),error:null,busy:false,backend:null,diagnostic:null,recovery:null,failedPhase:null};
 const listeners=new Set(),jobs=new Set(),PREF='lingrove-local-ai';
 let epoch=0,queue=Promise.resolve(),session=new AbortController(),activeJob=null,loadPromise=null;
 export function subscribeAI(fn){listeners.add(fn);return()=>listeners.delete(fn)}
@@ -10,7 +11,7 @@ function resetSession(reason){
   epoch++;session.abort(reason);for(const job of jobs)job.controller.abort(reason);
   jobs.clear();activeJob=null;queue=Promise.resolve();ai.worker?.terminate();ai.worker=null;ai.engine=null;loadPromise=null;session=new AbortController();
 }
-function failSession(error){const err=normalizeAIError(error);resetSession(err);update({status:'error',phase:'error',busy:false,error:err.message,text:err.message,progress:0})}
+function failSession(error,setup=false){const err=normalizeAIError(error),failure=setup?describeSetupFailure(err,ai.phase):{message:err.message,recovery:null,phase:ai.phase};resetSession(err);update({status:'error',phase:'error',busy:false,error:failure.message,text:failure.message,progress:0,recovery:failure.recovery,failedPhase:failure.phase})}
 function watchWorker(worker,run){
   const failed=event=>{if(run!==epoch)return;event.preventDefault?.();failSession(new Error(event.message||'The AI worker stopped. Reload local AI; downloaded model files are kept.'))};
   worker.addEventListener('error',failed);worker.addEventListener('messageerror',failed);
@@ -19,26 +20,26 @@ export function preferredModel(){try{const pref=JSON.parse(localStorage.getItem(
 export function enableAI(size=preferredModel()?.size||'phone'){
   if(ai.status==='ready')return Promise.resolve(true);if(loadPromise)return loadPromise;
   resetSession(abortError('The AI session was restarted.'));const run=epoch,signal=session.signal,backend=size==='phone'?'cpu':'webgpu';
-  update({status:'loading',phase:'device',text:backend==='cpu'?'Preparing AI for your phone…':'Checking GPU support…',progress:0,error:null,busy:false,backend,diagnostic:null});
+  update({status:'loading',phase:'device',text:backend==='cpu'?'Preparing AI for your phone…':'Checking GPU support…',progress:0,error:null,busy:false,backend,diagnostic:null,recovery:null,failedPhase:null});
   const loading=(async()=>{
     try{
       if(!globalThis.isSecureContext)throw new Error('Local AI needs a secure browser tab. Open this site directly using its HTTPS link.');
       let engine,model;
       if(backend==='cpu'){
         if(!globalThis.WebAssembly||!globalThis.Worker)throw new Error('This browser cannot run local AI. Update Chrome or Safari and open Lingrove in the browser.');
-        const {createPhoneEngine,PHONE_MODEL}=await waitForAI(import('./vendor/cpu.js?v=5'),{signal,timeoutMs:45000,message:'The phone AI runtime could not load. Check your connection and try again.'});
+        const {createPhoneEngine,PHONE_MODEL}=await waitForAI(import('./vendor/cpu.js?v=6'),{signal,timeoutMs:45000,message:'The phone AI runtime could not load. Check your connection and try again.'});
         if(signal.aborted)throw signal.reason;
         engine=createPhoneEngine();ai.worker={terminate:()=>engine.dispose()};ai.engine=engine;model=PHONE_MODEL.id;ai.model=model;
         update({phase:'download',text:'Loading the phone model. Cached files are reused; no GPU is needed.'});
-        await waitForAI(engine.load({signal,onProgress:({loaded,total})=>{if(run!==epoch)return;const fraction=total?loaded/total:0;update({phase:fraction>=1?'loading':'download',progress:Math.min(.92,fraction*.92),text:fraction>=1?'Files downloaded. Loading AI into memory…':`Downloading phone AI · ${Math.round(loaded/1000000)} / ${Math.round(total/1000000)} MB`})}}),{signal,timeoutMs:600000,message:'The model download took too long. Check your connection and free storage, then try again.'});
+        await waitForAI(engine.load({signal,onPhase:({phase,text})=>{if(run===epoch)update({phase,text,...(phase==='loading'?{progress:.92}:{})})},onProgress:({loaded,total})=>{if(run!==epoch)return;const fraction=total?loaded/total:0;update({phase:'download',progress:Math.min(.92,fraction*.92),text:fraction>=1?'Files downloaded. Finishing the saved model…':`Downloading phone AI · ${Math.round(loaded/1000000)} / ${Math.round(total/1000000)} MB`})}}),{signal,timeoutMs:600000,message:'The model download took too long. Check your connection and free storage, then try again.'});
       }else{
         if(!navigator.gpu)throw new Error('GPU mode is unavailable in this browser. Choose Phone mode; it does not need WebGPU.');
         const adapter=await waitForAI(navigator.gpu.requestAdapter(),{signal,timeoutMs:15000,message:'GPU detection did not finish. Try Phone mode.'});
         if(!adapter)throw new Error('A compatible GPU is not available. Choose Phone mode to run AI on your device’s processor.');
         const precision=adapter.features.has('shader-f16')?'16':'32';model=`Qwen3-${size}-q4f${precision}_1-MLC`;
-        const {CreateWebWorkerMLCEngine}=await waitForAI(import('./vendor/engine.js?v=5'),{signal,timeoutMs:45000,message:'The AI runtime could not load. Check your connection and try again.'});
+        const {CreateWebWorkerMLCEngine}=await waitForAI(import('./vendor/engine.js?v=6'),{signal,timeoutMs:45000,message:'The AI runtime could not load. Check your connection and try again.'});
         if(signal.aborted)throw signal.reason;
-        const worker=new Worker(new URL('./vendor/worker.js?v=5',import.meta.url),{type:'module'});ai.worker=worker;ai.model=model;watchWorker(worker,run);
+        const worker=new Worker(new URL('./vendor/worker.js?v=6',import.meta.url),{type:'module'});ai.worker=worker;ai.model=model;watchWorker(worker,run);
         update({phase:'download',text:'Loading model files. Previously downloaded files will be reused.'});
         engine=await waitForAI(CreateWebWorkerMLCEngine(worker,model,{initProgressCallback:p=>{if(run!==epoch)return;update({progress:Math.min(.92,Math.max(0,p.progress)*.92),phase:/cache|loading/i.test(p.text)?'loading':'download',text:p.text})}},{context_window_size:2048}),{signal,timeoutMs:600000,message:'Model loading took too long. Try Phone mode or close other tabs and load again.'});
       }
@@ -47,7 +48,7 @@ export function enableAI(size=preferredModel()?.size||'phone'){
       await verifyAIReady(engine,{signal,backend,onDiagnostic:diagnostic=>{if(run===epoch)ai.diagnostic={backend,...diagnostic}}});
       if(run!==epoch)return false;try{localStorage.setItem(PREF,JSON.stringify({size,model,backend}))}catch{}
       update({status:'ready',phase:'ready',progress:1,text:backend==='cpu'?'Phone AI is ready. A test reply passed without using a GPU.':`Qwen3 ${size} is ready. A test reply passed on this device.`,error:null});return true;
-    }catch(error){if(run===epoch)failSession(error);return false}
+    }catch(error){if(run===epoch)failSession(error,true);return false}
     finally{if(run===epoch)loadPromise=null}
   })();
   loadPromise=loading;loading.finally(()=>{if(loadPromise===loading)loadPromise=null});return loading;
@@ -56,16 +57,16 @@ export async function restoreCachedAI(){
   const pref=preferredModel();if(!pref?.model||ai.status!=='idle')return;
   try{
     let cached=false;
-    if(pref.size==='phone'){const {hasPhoneModel}=await import('./vendor/cpu.js?v=5');cached=await hasPhoneModel()}
-    else if(navigator.gpu){const {hasModelInCache}=await import('./vendor/engine.js?v=5');cached=await hasModelInCache(pref.model)}
+    if(pref.size==='phone'){const {hasPhoneModel}=await import('./vendor/cpu.js?v=6');cached=await hasPhoneModel()}
+    else if(navigator.gpu){const {hasModelInCache}=await import('./vendor/engine.js?v=6');cached=await hasModelInCache(pref.model)}
     if(cached){if(ai.status==='idle')await enableAI(pref.size)}else update({text:'Your saved AI model is not available. Open AI setup to load Phone mode.'});
   }catch{update({text:'Open AI setup to restore your saved model.'})}
 }
-export function cancelAI(){resetSession(abortError('AI setup cancelled. You can load it again anytime.'));update({status:'idle',phase:'idle',text:'AI setup cancelled. Downloaded files are kept.',progress:0,busy:false,error:null})}
+export function cancelAI(){resetSession(abortError('AI setup cancelled. You can load it again anytime.'));update({status:'idle',phase:'idle',text:'AI setup cancelled. Downloaded files are kept.',progress:0,busy:false,error:null,recovery:null,failedPhase:null})}
 export async function clearModelCache(){
   resetSession(abortError('AI stopped because its downloaded files were removed.'));update({status:'idle',phase:'idle',busy:false,error:null,progress:0,text:'Removing downloaded models…'});try{localStorage.removeItem(PREF)}catch{}
-  const {removePhoneModel}=await import('./vendor/cpu.js?v=5');await removePhoneModel();
-  const {deleteModelAllInfoInCache,prebuiltAppConfig}=await import('./vendor/engine.js?v=5');
+  const {removePhoneModel}=await import('./vendor/cpu.js?v=6');await removePhoneModel();
+  const {deleteModelAllInfoInCache,prebuiltAppConfig}=await import('./vendor/engine.js?v=6');
   for(const model of prebuiltAppConfig.model_list.filter(m=>/^Qwen3-(0.6B|1.7B)-q4f(16|32)_1-MLC$/.test(m.model_id)))await deleteModelAllInfoInCache(model.model_id);
   update({text:'Downloaded AI models removed from this browser.'});
 }

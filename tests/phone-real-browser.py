@@ -12,7 +12,7 @@ with sync_playwright() as p:
   if old!=page:old.close()
  errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.goto(BASE)
  page.wait_for_function("document.querySelector('[data-language]') || document.querySelector('#lesson-topic') || document.querySelector('#setup-progress .error')",timeout=660000)
- status=page.evaluate("async()=>{const {ai}=await import('/ai.js?v=5');return {status:ai.status,backend:ai.backend,diagnostic:ai.diagnostic,error:ai.error}}")
+ status=page.evaluate("async()=>{const {ai}=await import('/ai.js?v=6');return {status:ai.status,backend:ai.backend,diagnostic:ai.diagnostic,error:ai.error}}")
  assert status['status']=='ready',status
  print(json.dumps({'check':'automatic real Qwen startup and test reply','status':status}),flush=True)
  if page.locator('[data-language="zh"]').count():page.locator('[data-language="zh"]').click()

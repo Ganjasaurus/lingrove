@@ -1,10 +1,14 @@
 import { build } from 'esbuild';
+import {dirname} from 'node:path';
+import {patchWllama381} from './scripts/patch-wllama-381.mjs';
 import { mkdir,copyFile,cp,readFile } from 'node:fs/promises';
+const wllamaVersion=JSON.parse(await readFile('node_modules/@wllama/wllama/package.json','utf8')).version;
+const storageCleanup={name:'wllama-storage-cleanup',setup(plugin){plugin.onLoad({filter:/@wllama[/\\]wllama[/\\]esm[/\\]index\.js$/},async args=>({contents:patchWllama381(await readFile(args.path,'utf8'),wllamaVersion),loader:'js',resolveDir:dirname(args.path)}))}};
 await mkdir('dist/vendor', { recursive: true });
 await Promise.all([
   build({entryPoints:['src/worker.js'],bundle:true,format:'esm',outfile:'dist/vendor/worker.js',minify:true,target:'es2022'}),
   build({entryPoints:['src/engine.js'],bundle:true,format:'esm',outfile:'dist/vendor/engine.js',minify:true,target:'es2022'}),
-  build({entryPoints:['src/cpu.js'],bundle:true,format:'esm',outfile:'dist/vendor/cpu.js',minify:true,target:'es2022'}),
+  build({entryPoints:['src/cpu.js'],plugins:[storageCleanup],bundle:true,format:'esm',outfile:'dist/vendor/cpu.js',minify:true,target:'es2022'}),
   build({entryPoints:['src/language.js'],bundle:true,format:'esm',outfile:'dist/vendor/language.js',minify:true,target:'es2022'}),
   copyFile('node_modules/@wllama/wllama/esm/wasm/wllama.wasm','dist/vendor/wllama.wasm'),
   copyFile('node_modules/@wllama/wllama-compat/wasm/wllama.wasm','dist/vendor/wllama-compat.wasm'),
