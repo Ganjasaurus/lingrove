@@ -21,6 +21,8 @@ Open `http://localhost:4173`. Local AI needs a secure context (HTTPS or localhos
 - Imported English or Chinese text, safely rendered as text.
 - Four guided conversation scenes, explicitly labeled as scripted practice.
 - Optional Qwen3 0.6B or 1.7B via WebLLM in a web worker, with progress, cancellation, cache removal, GPU capability detection, streaming chat, lesson generation and translation.
+- Readiness requires a successful model reply, not just a completed download. Cached models reload after a previous successful opt-in; pending lesson and phrase requests continue after setup.
+- Model startup, generation and translation have deadlines. Worker failures show readable errors, Stop recovers from an unresponsive worker, and failed chat messages can be retried.
 - Optional Chrome Translator language packs for on-device English/Chinese translation independent of the chat model.
 - Service worker caches the app shell. Dictionary and runtime bundles cache when used. Browser eviction can remove cached data.
 
@@ -34,13 +36,23 @@ Small models can produce incorrect Chinese, pinyin or translations. Original les
 
 ## Data and privacy
 
-Learning data is in localStorage under `lingrove-v1`; model artifacts are managed by WebLLM browser caches. No analytics, hosted prompts, accounts within the app, cross-device sync or billing. Sites provides private hosting access. CSV exports neutralize formula prefixes. Imported text and model output use escaped text rendering.
+Learning data is in localStorage under `lingrove-v1`, and the last successfully loaded model is remembered under `lingrove-local-ai`; model artifacts are managed by WebLLM browser caches. No analytics, hosted prompts, accounts within the app, cross-device sync or billing. Sites provides private hosting access. CSV exports neutralize formula prefixes. Imported text and model output use escaped text rendering.
 
 ## Validation
 
-`npm test` validates bilingual corpus alignment, dictionary mappings, Chinese segmentation, model-response validation, review scheduling and safe rendering/export helpers.
+`npm test` validates bilingual corpus alignment, dictionary mappings, Chinese segmentation, model-response validation, review scheduling and safe rendering/export helpers. It also exercises the actual WebLLM worker-client error protocol, explicit JSON schemas, generation deadlines, cancellation of active/queued work, empty responses and interruption recovery. The underlying GPU worker is replaced with controlled responses in these regression tests.
 
-`python tests/browser.py` uses the environment's installed Playwright and Chromium against port 4173. It checks search/filter/bookmark flows, both translation directions, saving and persistence, flashcards, guided chat, text import, unsupported GPU handling, dictionary lookup and mobile layout. Generated lesson and streaming chat UI are exercised with deterministic mock engines. The test environment has no usable WebGPU adapter, so actual GPU model download/inference has **not** been validated. Browser-native language pack downloads and speech voice availability also depend on the user's browser and device.
+`python tests/browser.py` uses the environment's installed Playwright and Chromium against port 4173. It checks search/filter/bookmark flows, both translation directions, saving and persistence, flashcards, guided chat, text import, unsupported GPU handling, dictionary lookup and mobile layout. Generated lesson and streaming chat UI are exercised with deterministic mock engines.
+
+`python tests/ai-browser.py` reproduces string errors from the real worker-client protocol in the UI and checks failed lesson recovery, stalled requests, Stop, Retry, structured lessons, readiness gating, setup cancellation, and continuing lesson/phrase requests after successful setup. Model responses are controlled fixtures; these tests do not prove inference quality or hardware compatibility.
+
+`python tests/cache-browser.py` verifies that the versioned AI modules are cached and that the app, reader and downloaded dictionary reload offline.
+
+Live-model check, October 22, 2026: downloaded the actual Qwen3 0.6B q4f32 weights and runtime in Chromium, then verified cached reload. The execution environment has no physical GPU. With a software SwiftShader adapter, inference did not return a reply within the three-minute setup deadline; the updated app displayed a readable error and reset the engine instead of claiming readiness. **Successful real-model generation is not yet verified on supported physical hardware.** Browser-native language pack downloads, system speech voices and mainland-China availability also remain device/network dependent.
+
+The deployed private URL was also checked in Chromium with the existing Sites authorization token: its library and AI device detection loaded without browser exceptions. Hosting returned HTTPS successfully, with no restrictive CSP/Permissions-Policy response headers and no recent server error logs.
+
+The October 2026 repair includes a serialized JSON schema for WebLLM 0.2.85 lesson generation. Its grammar compiler rejects the previous `json_object` request with no schema. WebLLM worker errors can arrive as strings, so all AI boundaries now normalize them before displaying their messages. Updated script URLs and a new service-worker cache version prevent stale AI modules from being reused after this release.
 
 ## Dictionary and assets
 
