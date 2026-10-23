@@ -15,8 +15,9 @@ export function waitForAI(promise,{signal,timeoutMs=0,message='The local AI stop
     if(timeoutMs>0)timer=setTimeout(()=>{const e=new Error(message);e.name='TimeoutError';done(reject,e)},timeoutMs);
   });
 }
-export function lessonSchema(count=4){return {type:'object',properties:{title:{type:'string'},zhTitle:{type:'string'},lines:{type:'array',minItems:count,maxItems:count,items:replySchema()}},required:['title','zhTitle','lines'],additionalProperties:false}}
+export function lessonSchema(count=4,language='en'){return language==='es'?{type:'object',properties:{title:{type:'string'},esTitle:{type:'string'},lines:{type:'array',minItems:count,maxItems:count,items:spanishReplySchema()}},required:['title','esTitle','lines'],additionalProperties:false}:{type:'object',properties:{title:{type:'string'},zhTitle:{type:'string'},lines:{type:'array',minItems:count,maxItems:count,items:replySchema()}},required:['title','zhTitle','lines'],additionalProperties:false}}
 export function replySchema(){return {type:'object',properties:{en:{type:'string',pattern:'^[ -~]*[A-Za-z][ -~]*$'},zh:{type:'string',minLength:1}},required:['en','zh'],additionalProperties:false}}
+export function spanishReplySchema(){return {type:'object',properties:{en:{type:'string',pattern:'^[ -~]*[A-Za-z][ -~]*$'},es:{type:'string',minLength:1}},required:['en','es'],additionalProperties:false}}
 export function readBilingualReply(raw,{partial=false}={}){
   let result;
   if(partial){

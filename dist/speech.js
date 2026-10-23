@@ -7,8 +7,8 @@ const pending=new Map();
 function refreshVoices(){try{voices=globalThis.speechSynthesis?.getVoices()||[]}catch{voices=[]}}
 refreshVoices();globalThis.speechSynthesis?.addEventListener?.('voiceschanged',refreshVoices);
 export function selectVoice(list,lang){
-  const matches=list.filter(v=>lang==='zh'?/^(cmn|zh-(CN|TW|Hans|Hant))(?:-|$)/i.test(v.lang):/^en(?:-|$)/i.test(v.lang));
-  return matches.find(v=>v.localService&&/^(en-US|zh-CN|cmn)$/i.test(v.lang))||matches.find(v=>v.localService)||matches[0]||null;
+  const matches=list.filter(v=>lang==='zh'?/^(cmn|zh-(CN|TW|Hans|Hant))(?:-|$)/i.test(v.lang):lang==='es'?/^es(?:-|$)/i.test(v.lang):/^en(?:-|$)/i.test(v.lang));
+  return matches.find(v=>v.localService&&/^(en-US|zh-CN|cmn|es-ES|es-MX|es-US)$/i.test(v.lang))||matches.find(v=>v.localService)||matches[0]||null;
 }
 export function speechChunks(items){
   return items.flatMap(item=>{
@@ -42,7 +42,7 @@ function nativeSpeak(item,voice,rate,signal,onStart){
     let startTimer,endTimer,finished=false;
     const done=(error)=>{if(finished)return;finished=true;clearTimeout(startTimer);clearTimeout(endTimer);signal.removeEventListener('abort',cancel);if(utterance===u)utterance=null;error?reject(error):resolve()};
     const cancel=()=>done(aborted());
-    const u=new SpeechSynthesisUtterance(item.text);utterance=u;u.lang=item.lang==='zh'?'zh-CN':'en-US';u.voice=voice;u.rate=rate;u.volume=1;
+    const u=new SpeechSynthesisUtterance(item.text);utterance=u;u.lang=item.lang==='zh'?'zh-CN':item.lang==='es'?'es-ES':'en-US';u.voice=voice;u.rate=rate;u.volume=1;
     u.onstart=()=>{if(finished||signal.aborted)return;clearTimeout(startTimer);onStart();endTimer=setTimeout(()=>{done(new Error('The device voice stopped responding.'));globalThis.speechSynthesis?.cancel()},Math.max(18000,item.text.length*250/rate))};
     u.onend=()=>done();u.onerror=e=>done(signal.aborted?aborted():new Error(e.error||'The device voice could not play.'));
     signal.addEventListener('abort',cancel,{once:true});
