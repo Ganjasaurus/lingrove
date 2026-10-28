@@ -24,8 +24,17 @@ export function enableAI(size=preferredModel()?.size||'phone'){
   const loading=(async()=>{
     try{
       if(!globalThis.isSecureContext)throw new Error('Local AI needs a secure browser tab. Open this site directly using its HTTPS link.');
-      let engine,model;
-      if(backend==='cpu'){
+      let engine,model,adapter=null,activeSize=size,activeBackend=backend;
+      if(activeBackend==='webgpu'){
+        if(navigator.gpu){
+          try{adapter=await waitForAI(navigator.gpu.requestAdapter(),{signal,timeoutMs:15000,message:'GPU detection did not finish. Try Phone mode.'})}catch{adapter=null}
+        }
+        if(!adapter){
+          activeSize='phone';activeBackend='cpu';
+          update({backend:'cpu',phase:'device',text:'WebGPU unavailable — falling back to Phone CPU mode…'});
+        }
+      }
+      if(activeBackend==='cpu'){
         if(!globalThis.WebAssembly||!globalThis.Worker)throw new Error('This browser cannot run local AI. Update Chrome or Safari and open Lingrove in the browser.');
         const {createPhoneEngine,PHONE_MODEL}=await waitForAI(import('./vendor/cpu.js?v=6'),{signal,timeoutMs:45000,message:'The phone AI runtime could not load. Check your connection and try again.'});
         if(signal.aborted)throw signal.reason;
@@ -33,10 +42,7 @@ export function enableAI(size=preferredModel()?.size||'phone'){
         update({phase:'download',text:'Loading the phone model. Cached files are reused; no GPU is needed.'});
         await waitForAI(engine.load({signal,onPhase:({phase,text})=>{if(run===epoch)update({phase,text,...(phase==='loading'?{progress:.92}:{})})},onProgress:({loaded,total})=>{if(run!==epoch)return;const fraction=total?loaded/total:0;update({phase:'download',progress:Math.min(.92,fraction*.92),text:fraction>=1?'Files downloaded. Finishing the saved model…':`Downloading phone AI · ${Math.round(loaded/1000000)} / ${Math.round(total/1000000)} MB`})}}),{signal,timeoutMs:600000,message:'The model download took too long. Check your connection and free storage, then try again.'});
       }else{
-        if(!navigator.gpu)throw new Error('GPU mode is unavailable in this browser. Choose Phone mode; it does not need WebGPU.');
-        const adapter=await waitForAI(navigator.gpu.requestAdapter(),{signal,timeoutMs:15000,message:'GPU detection did not finish. Try Phone mode.'});
-        if(!adapter)throw new Error('A compatible GPU is not available. Choose Phone mode to run AI on your device’s processor.');
-        const precision=adapter.features.has('shader-f16')?'16':'32';model=`Qwen3-${size}-q4f${precision}_1-MLC`;
+        const precision=adapter.features.has('shader-f16')?'16':'32';model=`Qwen3-${activeSize}-q4f${precision}_1-MLC`;
         const {CreateWebWorkerMLCEngine}=await waitForAI(import('./vendor/engine.js?v=6'),{signal,timeoutMs:45000,message:'The AI runtime could not load. Check your connection and try again.'});
         if(signal.aborted)throw signal.reason;
         const worker=new Worker(new URL('./vendor/worker.js?v=6',import.meta.url),{type:'module'});ai.worker=worker;ai.model=model;watchWorker(worker,run);
@@ -45,9 +51,9 @@ export function enableAI(size=preferredModel()?.size||'phone'){
       }
       if(run!==epoch)return false;ai.engine=engine;
       update({phase:'verifying',progress:.96,text:'Files loaded. Checking a first reply…'});
-      await verifyAIReady(engine,{signal,backend,onDiagnostic:diagnostic=>{if(run===epoch)ai.diagnostic={backend,...diagnostic}}});
-      if(run!==epoch)return false;try{localStorage.setItem(PREF,JSON.stringify({size,model,backend}))}catch{}
-      update({status:'ready',phase:'ready',progress:1,text:backend==='cpu'?'Phone AI is ready. A test reply passed without using a GPU.':`Qwen3 ${size} is ready. A test reply passed on this device.`,error:null});return true;
+      await verifyAIReady(engine,{signal,backend:activeBackend,onDiagnostic:diagnostic=>{if(run===epoch)ai.diagnostic={backend:activeBackend,...diagnostic}}});
+      if(run!==epoch)return false;try{localStorage.setItem(PREF,JSON.stringify({size:activeSize,model,backend:activeBackend}))}catch{}
+      update({status:'ready',phase:'ready',progress:1,text:activeBackend==='cpu'?'Phone AI is ready. A test reply passed without using a GPU.':`Qwen3 ${activeSize} is ready. A test reply passed on this device.`,error:null});return true;
     }catch(error){if(run===epoch)failSession(error,true);return false}
     finally{if(run===epoch)loadPromise=null}
   })();
