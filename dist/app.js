@@ -4,6 +4,7 @@ import {pinyinFor} from './vendor/language.js?v=6';
 import {LessonStore,escapeHTML as esc,cleanSpec,parseLesson,lessonMessages,lessonText,backup} from './lessons.js?v=6';
 import {speech,playSpeech,stopSpeech,subscribeSpeech} from './speech.js?v=6';
 import {isAppleMobile} from './setup-support.js?v=6';
+import {isConsole,start as startConsoleKit} from './console-kit.js?v=6';
 
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const paths={arrow:'M4 12h16m-6-6 6 6-6 6',back:'M20 12H4m6-6-6 6 6 6',spark:'m12 3 2.7 6.3L21 12l-6.3 2.7L12 21l-2.7-6.3L3 12l6.3-2.7L12 3Z',sound:'M11 4 6 8H2v8h4l5 4V4Z M15 8a6 6 0 0 1 0 8 M18 5a10 10 0 0 1 0 14',stop:'M6 6h12v12H6Z',check:'m5 12 4 4L19 6',download:'M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5',book:'M12 5v15M12 5C8 2 3 4 3 4v15s5-2 9 1c4-3 9-1 9-1V4s-5-2-9 1Z',plus:'M12 5v14M5 12h14',close:'m6 6 12 12M6 18 18 6',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',globe:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z'};
@@ -13,6 +14,8 @@ const library=new LessonStore(storage),unsaved=new Map();
 let language=library.data.language||'en',chosen=!!library.data.languageChosen,draft=cleanSpec(library.data.draft),busy=false,genError='',genStarted=0,generatedChars=0,setupPromise=null,wasCancelled=false;
 let screen='setup',lessonId=null,search='',editing=false,translations=library.data.showTranslations!==false,pinyin=library.data.showPinyin!==false;
 let speechSettings={rate:.85,mode:'auto',...library.data.speech};
+// Xbox One: Qwen (about 550 MB) is too big for the console's browser tab, so there Lingrove shows a note instead of downloading it.
+const onConsole=isConsole();if(onConsole)startConsoleKit({card:false});
 const langName=lang=>lang==='zh'?'Chinese':lang==='es'?'Spanish':'English';
 const allLessons=()=>[...unsaved.values(),...library.data.lessons.filter(l=>!unsaved.has(l.id))];
 const current=()=>allLessons().find(l=>l.id===lessonId);
@@ -24,14 +27,16 @@ function route(){const [part,id]=(location.hash||'').replace(/^#\/?/,'').split('
 function shell(){return `<header class="topbar"><a class="brand" href="#/create" data-nav="create"><img src="/assets/leaf.svg" alt="">lingrove<span>.</span></a><nav aria-label="Main navigation"><button class="nav-button ${screen==='create'?'active':''}" data-nav="create">${icon('plus')}<span>New lesson</span></button><button class="nav-button ${screen==='saved'?'active':''}" data-nav="saved">${icon('book')}<span>Saved<span class="saved-count">${allLessons().length||''}</span></span></button></nav></header><main id="main" tabindex="-1"></main><footer><span>Made by you. Written on your device.</span><button class="text-button" data-action="settings">Settings</button></footer>`}
 function render(){
   $('#app').innerHTML=shell();
-  if(screen==='setup')renderSetup();else if(screen==='language')renderLanguage();else if(screen==='saved')renderSaved();else if(screen==='reader')renderReader();else renderCreate();
+  if(screen==='setup'||onConsole&&screen!=='saved'&&screen!=='reader')renderSetup();else if(screen==='language')renderLanguage();else if(screen==='saved')renderSaved();else if(screen==='reader')renderReader();else renderCreate();
   document.title=(screen==='reader'&&current()?title(current()):screen==='saved'?'Saved lessons':'Your own language lesson')+' · Lingrove';
   updateAI();updateSpeech();
 }
 function renderSetup(){
+  if(onConsole){$('#main').innerHTML=`<section class="onboarding console-note"><div class="setup-mark"><img src="/assets/leaf.svg" alt=""></div><h1>Lingrove needs a<br><em>computer or phone.</em></h1><p class="lede">Your lesson writer is a little AI that runs on your own device. It is too big for this console, so nothing downloads here.</p><p class="lede">Open lingrove on a computer or a phone to make your lessons.</p></section>`;return}
   $('#main').innerHTML=`<section class="onboarding setup-card"><span class="step-label">STEP 1 OF 3 · YOUR LESSON WRITER</span><div class="setup-mark"><img src="/assets/leaf.svg" alt=""></div><h1>A little AI.<br><em>All yours.</em></h1><p class="lede">Getting Qwen ready to write your lessons.</p><div class="model-label">Qwen3.5 · Phone mode</div><div id="setup-progress" class="setup-progress" role="status" aria-live="polite"></div><p class="fine-print">About 550 MB on the first visit. Downloads automatically and stays in this browser when storage is available. Wi-Fi is best.</p><div id="setup-actions" class="button-row"></div><p class="quiet">No account or API key inside the app. Keep this page open.</p></section>`;
 }
 async function startSetup(){
+  if(onConsole)return false;
   if(setupPromise)return setupPromise;wasCancelled=false;
   const loading=enableAI('phone');setupPromise=loading;
   try{const ready=await loading;if(ready&&screen==='setup')navigate(chosen?'create':'language');return ready}
