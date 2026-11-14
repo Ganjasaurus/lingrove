@@ -29,7 +29,7 @@ export class LessonStore{
   save(lesson){this.write({...this.data,lessons:[lesson,...this.data.lessons.filter(l=>l.id!==lesson.id)]})}
   remove(id){this.write({...this.data,lessons:this.data.lessons.filter(l=>l.id!==id)})}
   importBackup(raw){
-    const parsed=JSON.parse(raw),items=Array.isArray(parsed.lessons)?parsed.lessons:parsed.lesson?[parsed.lesson]:[];
+    const parsed=JSON.parse(raw),items=Array.isArray(parsed?.lessons)?parsed.lessons:parsed?.lesson?[parsed.lesson]:Array.isArray(parsed?.lines)?[parsed]:[];
     if(!items.length||items.length>300)throw new Error('Choose a Lingrove lesson backup with up to 300 lessons.');
     const lessons=items.map(cleanLesson).filter(Boolean);if(lessons.length!==items.length)throw new Error('Some lessons in this backup are incomplete.');
     const existing=new Set(this.data.lessons.map(l=>l.id));let added=0;
@@ -56,3 +56,60 @@ export function lessonMessages(spec,language){
 }
 export function lessonText(lesson){return [lesson.title,lesson.zhTitle,`${lesson.level} · ${lesson.language==='zh'?'Learning Chinese':lesson.language==='es'?'Learning Spanish':'Learning English'}`,'',...lesson.lines.flatMap(line=>[...line.filter(Boolean),''])].join('\n')}
 export function backup(lessons){return JSON.stringify({app:'Lingrove',version:2,exportedAt:new Date().toISOString(),lessons},null,2)}
+export function buildInstantLesson(rawText,{filename='',defaultLang='en',pinyinFn=null,id=crypto.randomUUID(),now=Date.now()}={}){
+  const hasCjk=s=>/[\u3400-\u9fff]/u.test(s);
+  const hasEsCue=s=>/[¿¡áéíóúüñÁÉÍÓÚÜÑ]/.test(s);
+  const cleaned=String(rawText??'').replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n');
+  const rawLines=cleaned.split('\n').map(s=>s.trim()).filter(s=>s&&!/^```/.test(s)&&!/^[-*_]{3,}$/.test(s));
+  if(!rawLines.length)throw new Error('This text file is empty.');
+  let heading='';
+  if(/^#{1,4}\s+/.test(rawLines[0])){
+    heading=rawLines.shift().replace(/^#{1,4}\s+/,'').trim();
+  }
+  const cleanMd=s=>s.replace(/^[-*+]\s+/,'').replace(/^\d+[.)]\s+/,'').replace(/\*\*([^*]+)\*\*/g,'$1').trim();
+  const body=rawLines.map(cleanMd).filter(Boolean);
+  const fallbackTitle=String(filename||'').replace(/\.[^.]+$/,'').replace(/[_-]+/g,' ').trim();
+  const rawTitle=(heading||fallbackTitle||(body[0]||'Imported lesson').slice(0,60)).slice(0,120);
+  if(!body.length)body.push(rawTitle);
+
+  const anyCjk=hasCjk(rawTitle)||body.some(hasCjk);
+  const anyEs=!anyCjk&&(defaultLang==='es'||hasEsCue(rawTitle)||body.some(hasEsCue));
+  const lang=anyCjk?'zh':anyEs?'es':(defaultLang==='zh'?'zh':defaultLang==='es'?'es':'en');
+  const py=s=>(lang!=='es'&&hasCjk(s)&&typeof pinyinFn==='function'?String(pinyinFn(s)||''):'');
+
+  const pairs=[];
+  for(let i=0;i<body.length&&pairs.length<200;i++){
+    const cur=body[i];
+    const sepMatch=cur.includes('\t')?cur.split('\t'):cur.includes(' | ')?cur.split(' | '):null;
+    if(sepMatch&&sepMatch.length>=2){
+      const a=sepMatch[0].trim(),b=sepMatch.slice(1).join(' ').trim();
+      if(hasCjk(a)&&!hasCjk(b))pairs.push([b,a,py(a)]);
+      else pairs.push([a,b,py(b)||py(a)]);
+      continue;
+    }
+    const next=body[i+1];
+    if(anyCjk&&next&&hasCjk(cur)!==hasCjk(next)&&!next.includes('\t')&&!next.includes(' | ')){
+      const zh=hasCjk(cur)?cur:next;
+      const en=hasCjk(cur)?next:cur;
+      pairs.push([en,zh,py(zh)]);
+      i++;
+      continue;
+    }
+    if(hasCjk(cur))pairs.push(['',cur,py(cur)]);
+    else if(lang==='es')pairs.push(['',cur,'']);
+    else if(lang==='zh')pairs.push([cur,cur,'']);
+    else pairs.push([cur,'','']);
+  }
+  const zhTitle=hasCjk(rawTitle)?rawTitle:(lang==='es'?rawTitle:'');
+  return cleanLesson({
+    id,
+    title:rawTitle,
+    zhTitle,
+    language:lang,
+    level:'A2',
+    lines:pairs,
+    createdAt:now,
+    updatedAt:now,
+    spec:{topic:rawTitle,level:'A2',length:4,format:'story'},
+  });
+}

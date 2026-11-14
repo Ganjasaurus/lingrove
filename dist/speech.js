@@ -103,3 +103,84 @@ export function playSpeech(items,{key='audio',mode='auto',rate=.85}={}){
     }catch(error){if(run===request&&error.name!=='AbortError')update({status:'error',key:null,message:error.message||'Audio could not play. Try the basic voice in Voice & speed.'});return false}
   })();
 }
+export function encodeWavPcm16(pcm,sampleRate=22050){
+  const samples=pcm instanceof Int16Array?pcm:new Int16Array(pcm||0);
+  const dataBytes=samples.length*2;
+  const buffer=new ArrayBuffer(44+dataBytes);
+  const view=new DataView(buffer);
+  const writeAscii=(off,str)=>{for(let i=0;i<str.length;i++)view.setUint8(off+i,str.charCodeAt(i))};
+  writeAscii(0,'RIFF');
+  view.setUint32(4,36+dataBytes,true);
+  writeAscii(8,'WAVE');
+  writeAscii(12,'fmt ');
+  view.setUint32(16,16,true);
+  view.setUint16(20,1,true);
+  view.setUint16(22,1,true);
+  view.setUint32(24,sampleRate,true);
+  view.setUint32(28,sampleRate*2,true);
+  view.setUint16(32,2,true);
+  view.setUint16(34,16,true);
+  writeAscii(36,'data');
+  view.setUint32(40,dataBytes,true);
+  new Int16Array(buffer,44,samples.length).set(samples);
+  return new Blob([buffer],{type:'audio/wav'});
+}
+export function lessonSpeechItems(input,{lang='bilingual'}={}){
+  if(Array.isArray(input))return input;
+  if(!input||!Array.isArray(input.lines))return[];
+  const targetLang=input.language==='es'?'es':'zh';
+  const primaryIsTarget=input.language==='zh'||input.language==='es';
+  const items=[];
+  if(lang==='en'){
+    if(input.title)items.push({text:input.title,lang:'en'});
+    for(const line of input.lines)if(line?.[0])items.push({text:line[0],lang:'en'});
+  }else if(lang==='zh'||lang==='es'||lang==='target'){
+    if(input.zhTitle)items.push({text:input.zhTitle,lang:targetLang});
+    for(const line of input.lines)if(line?.[1])items.push({text:line[1],lang:targetLang});
+  }else{
+    if(primaryIsTarget&&input.zhTitle)items.push({text:input.zhTitle,lang:targetLang});
+    else if(input.title)items.push({text:input.title,lang:'en'});
+    for(const line of input.lines){
+      if(!Array.isArray(line))continue;
+      if(primaryIsTarget){
+        if(line[1])items.push({text:line[1],lang:targetLang});
+        if(line[0])items.push({text:line[0],lang:'en'});
+      }else{
+        if(line[0])items.push({text:line[0],lang:'en'});
+        if(line[1])items.push({text:line[1],lang:targetLang});
+      }
+    }
+  }
+  return items;
+}
+export async function renderLessonWav(input,{lang='bilingual',rate=.85,pauseSec=.35,signal,synthesizeFn,onProgress}={}){
+  const items=lessonSpeechItems(input,{lang});
+  const chunks=speechChunks(items);
+  if(!chunks.length)throw new Error('There is no lesson text to export.');
+  const clampedRate=Math.min(1.2,Math.max(.6,Number(rate)||.85));
+  const abortSignal=signal||new AbortController().signal;
+  const runSynth=synthesizeFn||synthesize;
+  const parts=[];
+  let sampleRate=22050;
+  for(let i=0;i<chunks.length;i++){
+    if(abortSignal.aborted)throw aborted();
+    onProgress?.(i,chunks.length);
+    const audio=await runSynth(chunks[i],clampedRate,abortSignal);
+    if(audio?.sampleRate)sampleRate=audio.sampleRate;
+    const pcm=audio?.pcm instanceof Int16Array?audio.pcm:new Int16Array(audio?.pcm||0);
+    if(pcm.length)parts.push(pcm);
+  }
+  if(!parts.length)throw new Error('The offline voice produced no audio.');
+  const pauseSamples=Math.max(0,Math.round(sampleRate*pauseSec));
+  const tailSamples=Math.round(sampleRate*.12);
+  const totalSamples=parts.reduce((sum,p)=>sum+p.length,0)+pauseSamples*Math.max(0,parts.length-1)+tailSamples;
+  const merged=new Int16Array(totalSamples);
+  let offset=0;
+  for(let i=0;i<parts.length;i++){
+    merged.set(parts[i],offset);
+    offset+=parts[i].length;
+    if(i<parts.length-1)offset+=pauseSamples;
+  }
+  onProgress?.(chunks.length,chunks.length);
+  return encodeWavPcm16(merged,sampleRate);
+}

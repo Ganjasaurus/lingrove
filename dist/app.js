@@ -1,29 +1,379 @@
 import {ai,subscribeAI,enableAI,cancelAI,complete,stopGeneration,normalizeAIError} from './ai.js?v=6';
 import {lessonSchema} from './ai-support.js?v=6';
 import {pinyinFor} from './vendor/language.js?v=6';
-import {LessonStore,escapeHTML as esc,cleanSpec,parseLesson,lessonMessages,lessonText,backup} from './lessons.js?v=6';
-import {speech,playSpeech,stopSpeech,subscribeSpeech} from './speech.js?v=6';
+import {LessonStore,escapeHTML as esc,cleanSpec,parseLesson,lessonMessages,lessonText,backup,buildInstantLesson} from './lessons.js?v=6';
+import {speech,playSpeech,stopSpeech,subscribeSpeech,renderLessonWav} from './speech.js?v=6';
 import {isAppleMobile} from './setup-support.js?v=6';
 import {isConsole,start as startConsoleKit} from './console-kit.js?v=6';
+import {RF_APPS,sendToRfApp,triggerDownload,installRfImportReceiver} from './rf-bridge.js?v=6';
+
+export const WAV_SEND_TARGETS=['ripperclip','flipbook','soulcode','glyphnote','littleloop'];
+export const PNG_SEND_TARGETS=['ripperclip','fotoe','littleloop','soulcode','flipbook'];
 
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const paths={arrow:'M4 12h16m-6-6 6 6-6 6',back:'M20 12H4m6-6-6 6 6 6',spark:'m12 3 2.7 6.3L21 12l-6.3 2.7L12 21l-2.7-6.3L3 12l6.3-2.7L12 3Z',sound:'M11 4 6 8H2v8h4l5 4V4Z M15 8a6 6 0 0 1 0 8 M18 5a10 10 0 0 1 0 14',stop:'M6 6h12v12H6Z',check:'m5 12 4 4L19 6',download:'M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5',book:'M12 5v15M12 5C8 2 3 4 3 4v15s5-2 9 1c4-3 9-1 9-1V4s-5-2-9 1Z',plus:'M12 5v14M5 12h14',close:'m6 6 12 12M6 18 18 6',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',globe:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z'};
+const paths={arrow:'M4 12h16m-6-6 6 6-6 6',back:'M20 12H4m6-6-6 6 6 6',spark:'m12 3 2.7 6.3L21 12l-6.3 2.7L12 21l-2.7-6.3L3 12l6.3-2.7L12 3Z',sound:'M11 4 6 8H2v8h4l5 4V4Z M15 8a6 6 0 0 1 0 8 M18 5a10 10 0 0 1 0 14',stop:'M6 6h12v12H6Z',check:'m5 12 4 4L19 6',download:'M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5',book:'M12 5v15M12 5C8 2 3 4 3 4v15s5-2 9 1c4-3 9-1 9-1V4s-5-2-9 1Z',plus:'M12 5v14M5 12h14',close:'m6 6 12 12M6 18 18 6',settings:'M4 7h16M4 17h16M9 4v6M15 14v6',globe:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z',send:'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z'};
 const icon=name=>`<svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="${paths[name]||paths.spark}"/></svg>`;
 let storage;try{storage=localStorage}catch{storage={getItem(){return null},setItem(){throw new Error('Storage unavailable')}}}
 const library=new LessonStore(storage),unsaved=new Map();
+const coverCache=new Map(),coverLoading=new Set(),audioClipsByLesson=new Map();
 let language=library.data.language||'en',chosen=!!library.data.languageChosen,draft=cleanSpec(library.data.draft),busy=false,genError='',genStarted=0,generatedChars=0,setupPromise=null,wasCancelled=false;
 let screen='setup',lessonId=null,search='',editing=false,translations=library.data.showTranslations!==false,pinyin=library.data.showPinyin!==false;
 let speechSettings={rate:.85,mode:'auto',...library.data.speech};
+const bootParams=new URLSearchParams(location.search);
+const hasRfBoot=bootParams.get('rf_import')==='1'||bootParams.has('rf_inbox')||bootParams.has('rf_token')||Boolean(location.hash&&location.hash.includes('rf_b64='));
 // Xbox One: Qwen (about 550 MB) is too big for the console's browser tab, so there Lingrove shows a note instead of downloading it.
 const onConsole=isConsole();if(onConsole)startConsoleKit({card:false});
 const langName=lang=>lang==='zh'?'Chinese':lang==='es'?'Spanish':'English';
 const allLessons=()=>[...unsaved.values(),...library.data.lessons.filter(l=>!unsaved.has(l.id))];
 const current=()=>allLessons().find(l=>l.id===lessonId);
 const title=l=>(l.language==='zh'||l.language==='es')&&l.zhTitle?l.zhTitle:l.title;
+const slugify=s=>String(s||'lingrove-lesson').toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]+/gu,'-').replace(/^-+|-+$/g,'').slice(0,48)||'lingrove-lesson';
 function toast(text){$('#toast').textContent=text;$('#toast').classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').classList.remove('show'),5500)}
+function setShareStatus(text){const el=$('#share-modal-status')||$('#speech-status');if(el)el.textContent=text}
 function preferences(patch){try{library.preferences(patch)}catch{toast('Preferences could not be saved in this browser.')}}
 function navigate(next,id){editing=false;stopSpeech();screen=next;lessonId=id||null;const hash='#/'+(next==='reader'?'read/'+encodeURIComponent(id):next);if(location.hash!==hash)history.pushState(null,'',hash);render();window.scrollTo({top:0,behavior:'instant'})}
 function route(){const [part,id]=(location.hash||'').replace(/^#\/?/,'').split('/');if(part==='read'){try{return {screen:'reader',id:decodeURIComponent(id||'')}}catch{return {screen:'saved'}}}return {screen:part==='saved'||part==='library'?'saved':part==='language'?'language':part==='setup'?'setup':'create'}}
+
+function openMediaDb(){
+  if(typeof indexedDB==='undefined')return Promise.reject(new Error('IndexedDB unavailable'));
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open('lingrove-media',1);
+    req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains('covers'))req.result.createObjectStore('covers',{keyPath:'id'})};
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+}
+function putCachedCover(id,blob,name='cover.png'){
+  const prev=coverCache.get(id);if(prev?.url)URL.revokeObjectURL(prev.url);
+  const url=URL.createObjectURL(blob);
+  const entry={id,blob,url,name};
+  coverCache.set(id,entry);
+  return entry;
+}
+async function saveLessonCover(id,blob,name='cover.png'){
+  const entry=putCachedCover(id,blob,name);
+  try{
+    const db=await openMediaDb();
+    await new Promise((res,rej)=>{
+      const tx=db.transaction('covers','readwrite');
+      tx.objectStore('covers').put({id,blob,mime:blob.type||'image/png',name,updatedAt:Date.now()});
+      tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);
+    });
+  }catch{}
+  return entry;
+}
+async function getLessonCoverRecord(id){
+  if(coverCache.has(id))return coverCache.get(id);
+  try{
+    const db=await openMediaDb();
+    const rec=await new Promise(resolve=>{
+      const tx=db.transaction('covers','readonly');
+      const req=tx.objectStore('covers').get(id);
+      req.onsuccess=()=>resolve(req.result||null);
+      req.onerror=()=>resolve(null);
+    });
+    if(rec?.blob)return putCachedCover(id,rec.blob,rec.name||'cover.png');
+  }catch{}
+  return null;
+}
+async function deleteLessonCover(id){
+  const prev=coverCache.get(id);if(prev?.url)URL.revokeObjectURL(prev.url);
+  coverCache.delete(id);
+  try{
+    const db=await openMediaDb();
+    await new Promise(resolve=>{
+      const tx=db.transaction('covers','readwrite');
+      tx.objectStore('covers').delete(id);
+      tx.oncomplete=()=>resolve();tx.onerror=()=>resolve();
+    });
+  }catch{}
+}
+function ensureLessonCoverLoaded(id){
+  if(!id||coverCache.has(id)||coverLoading.has(id))return;
+  coverLoading.add(id);
+  getLessonCoverRecord(id).then(entry=>{
+    coverLoading.delete(id);
+    if(entry&&screen==='reader'&&lessonId===id&&!editing)renderReader();
+  }).catch(()=>{coverLoading.delete(id)});
+}
+
+function loadBitmapImage(blob){
+  return new Promise((resolve,reject)=>{
+    const url=URL.createObjectURL(blob);
+    const img=new Image();
+    img.onload=()=>{URL.revokeObjectURL(url);resolve(img)};
+    img.onerror=err=>{URL.revokeObjectURL(url);reject(err)};
+    img.src=url;
+  });
+}
+function roundRectPath(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);
+  ctx.closePath();
+}
+function wrapCanvasText(ctx,text,maxWidth,maxLines=2){
+  const str=String(text||'').trim();
+  if(!str)return[];
+  const tokens=str.match(/[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]|\S+\s*/gu)||[str];
+  const lines=[];let cur='';
+  for(const tok of tokens){
+    const test=cur+tok;
+    if(cur&&ctx.measureText(test.trimEnd()).width>maxWidth){
+      lines.push(cur.trimEnd());
+      if(lines.length>=maxLines){
+        const last=lines[lines.length-1];
+        lines[lines.length-1]=last.slice(0,Math.max(1,last.length-1)).trimEnd()+'…';
+        return lines;
+      }
+      cur=tok.trimStart();
+    }else cur=test;
+  }
+  if(cur.trim())lines.push(cur.trim());
+  return lines.slice(0,maxLines);
+}
+
+export async function renderLessonCardPng(lesson,{coverBlob=null}={}){
+  if(!lesson)throw new Error('No lesson selected.');
+  const W=1080,H=1350;
+  const cv=document.createElement('canvas');
+  cv.width=W;cv.height=H;
+  const ctx=cv.getContext('2d');
+  ctx.fillStyle='#faf9f5';ctx.fillRect(0,0,W,H);
+
+  roundRectPath(ctx,36,36,W-72,H-72,32);
+  ctx.fillStyle='#fffffa';ctx.fill();
+  ctx.lineWidth=3;ctx.strokeStyle='#dce2d5';ctx.stroke();
+
+  let coverImg=null;
+  const resolvedBlob=coverBlob||(await getLessonCoverRecord(lesson.id))?.blob||null;
+  if(resolvedBlob){
+    try{coverImg=await loadBitmapImage(resolvedBlob)}catch{coverImg=null}
+  }
+
+  // Header pill
+  const padX=86;
+  let y=92;
+  const badgeText=`LINGROVE · ${langName(lesson.language).toUpperCase()} · ${lesson.level||'A2'}`;
+  ctx.font='600 18px "DM Sans", system-ui, sans-serif';
+  const bw=Math.ceil(ctx.measureText(badgeText).width)+36;
+  roundRectPath(ctx,padX,y-26,bw,38,19);
+  ctx.fillStyle='#eef3e6';ctx.fill();
+  ctx.fillStyle='#285a45';ctx.fillText(badgeText,padX+18,y);
+  ctx.fillStyle='#859277';ctx.textAlign='right';
+  ctx.fillText(`${lesson.lines.length} BILINGUAL LINES`,W-padX,y);
+  ctx.textAlign='left';
+  y+=36;
+
+  if(coverImg){
+    const cw=W-padX*2,ch=lesson.lines.length>6?210:260;
+    ctx.save();
+    roundRectPath(ctx,padX,y,cw,ch,22);
+    ctx.clip();
+    const iw=coverImg.naturalWidth||coverImg.width||cw;
+    const ih=coverImg.naturalHeight||coverImg.height||ch;
+    const scale=Math.max(cw/iw,ch/ih);
+    const dw=iw*scale,dh=ih*scale;
+    ctx.drawImage(coverImg,padX+(cw-dw)/2,y+(ch-dh)/2,dw,dh);
+    ctx.restore();
+    roundRectPath(ctx,padX,y,cw,ch,22);
+    ctx.lineWidth=2;ctx.strokeStyle='#dce2d5';ctx.stroke();
+    y+=ch+34;
+  }else{
+    y+=18;
+  }
+
+  // Title & bilingual subtitle
+  const mainTitle=title(lesson);
+  const subTitle=(lesson.language==='zh'||lesson.language==='es')?lesson.title:(lesson.zhTitle||'');
+  ctx.fillStyle='#2c4638';
+  ctx.font='400 46px Georgia, "Songti SC", "Noto Serif CJK SC", serif';
+  const titleLines=wrapCanvasText(ctx,mainTitle,W-padX*2,2);
+  for(const tl of titleLines){ctx.fillText(tl,padX,y+36);y+=54}
+  if(subTitle&&subTitle!==mainTitle){
+    ctx.fillStyle='#739065';
+    ctx.font='500 24px "DM Sans", system-ui, sans-serif';
+    const subLines=wrapCanvasText(ctx,subTitle,W-padX*2,1);
+    for(const sl of subLines){ctx.fillText(sl,padX,y+22);y+=34}
+  }
+  y+=16;
+  ctx.strokeStyle='#dce2d5';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(padX,y);ctx.lineTo(W-padX,y);ctx.stroke();
+  y+=26;
+
+  // Bilingual lines
+  const isEs=lesson.language==='es';
+  const primary=lesson.language==='zh'||isEs?1:0;
+  const other=1-primary;
+  const maxContentY=H-98;
+  const visibleLines=lesson.lines.slice(0,8);
+  const availH=Math.max(240,maxContentY-y);
+  const slotH=availH/Math.max(1,visibleLines.length);
+  const compact=slotH<118;
+  const mainFontPx=compact?25:30;
+  const pyFontPx=compact?17:19;
+  const trFontPx=compact?19:22;
+  const textX=padX+52;
+  const textMaxW=W-padX-textX;
+
+  for(let i=0;i<visibleLines.length;i++){
+    if(y>maxContentY-40)break;
+    const ln=visibleLines[i];
+    const mainStr=ln[primary]||ln[other]||'';
+    const pyStr=!isEs&&ln[2]?ln[2]:'';
+    const trStr=ln[other]&&ln[other]!==mainStr?ln[other]:'';
+
+    ctx.fillStyle='#9daa8e';
+    ctx.font='600 17px "DM Sans", system-ui, sans-serif';
+    ctx.fillText(String(i+1).padStart(2,'0'),padX,y+mainFontPx-2);
+
+    let ly=y;
+    ctx.fillStyle='#2c4638';
+    ctx.font=`500 ${mainFontPx}px "DM Sans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif`;
+    const mWrapped=wrapCanvasText(ctx,mainStr,textMaxW,compact?1:2);
+    for(const ml of mWrapped){ctx.fillText(ml,textX,ly+mainFontPx);ly+=mainFontPx+8}
+
+    if(pyStr){
+      ctx.fillStyle='#739065';
+      ctx.font=`400 ${pyFontPx}px "DM Sans", system-ui, sans-serif`;
+      const pWrapped=wrapCanvasText(ctx,pyStr,textMaxW,1);
+      for(const pl of pWrapped){ctx.fillText(pl,textX,ly+pyFontPx+2);ly+=pyFontPx+7}
+    }
+    if(trStr){
+      ctx.fillStyle='#64725e';
+      ctx.font=`400 ${trFontPx}px "DM Sans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif`;
+      const tWrapped=wrapCanvasText(ctx,trStr,textMaxW,compact?1:2);
+      for(const tl of tWrapped){ctx.fillText(tl,textX,ly+trFontPx+2);ly+=trFontPx+7}
+    }
+    y=Math.max(ly+14,y+Math.min(slotH,ly-y+22));
+    if(i<visibleLines.length-1&&y<maxContentY-32){
+      ctx.strokeStyle='#edf1e7';ctx.lineWidth=1.5;
+      ctx.beginPath();ctx.moveTo(textX,y-6);ctx.lineTo(W-padX,y-6);ctx.stroke();
+    }
+  }
+
+  // Footer
+  ctx.fillStyle='#8b957f';
+  ctx.font='500 18px "DM Sans", system-ui, sans-serif';
+  ctx.fillText('lingrove. · Made by you, on your device',padX,H-58);
+  ctx.textAlign='right';
+  ctx.fillStyle='#285a45';
+  ctx.fillText('Bilingual Flashcard',W-padX,H-58);
+  ctx.textAlign='left';
+
+  return new Promise((resolve,reject)=>{
+    if(cv.toBlob){
+      cv.toBlob(b=>b?resolve(b):reject(new Error('Could not export flashcard PNG.')),'image/png');
+    }else{
+      try{
+        const dataUrl=cv.toDataURL('image/png');
+        const bin=atob(dataUrl.split(',')[1]||'');
+        const bytes=new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+        resolve(new Blob([bytes],{type:'image/png'}));
+      }catch(err){reject(err)}
+    }
+  });
+}
+if(typeof window!=='undefined')window.renderLessonCardPng=renderLessonCardPng;
+
+function ensureStarterLessonForMedia(rawName='',preferredLang=language){
+  const base=String(rawName||'').replace(/\.[^.]+$/,'').replace(/[_-]+/g,' ').trim()||'Shared Inspiration';
+  const lang=preferredLang==='es'?'es':'zh';
+  const lines=lang==='es'
+    ? [['Look closely at this picture and describe what you see.','Mira bien esta imagen y describe lo que ves.',''],['What story happens next?','¿Qué historia ocurre después?','']]
+    : [['Look closely at this picture and describe what you see.','仔细看看这张图，说说你看到了什么。',pinyinFor('仔细看看这张图，说说你看到了什么。')],['What story happens next?','接下来会发生什么故事？',pinyinFor('接下来会发生什么故事？')]];
+  const created={
+    id:'media-'+Date.now().toString(36),
+    title:base.slice(0,120),
+    zhTitle:lang==='es'?base.slice(0,120):'图文笔记',
+    language:lang,
+    level:'A2',
+    lines,
+    createdAt:Date.now(),
+    updatedAt:Date.now(),
+    spec:cleanSpec({topic:base,level:'A2',length:4,format:'story'}),
+  };
+  try{library.save(created)}catch{unsaved.set(created.id,created)}
+  return created;
+}
+
+async function handleIncomingAsset(item,{source='rf'}={}){
+  const file=item?.file||(typeof File!=='undefined'&&item instanceof File?item:null);
+  const blob=item?.blob||file||(item?.bytes?new Blob([item.bytes],{type:item.mime||'application/octet-stream'}):null);
+  if(!blob)return false;
+  const name=String(item?.name||file?.name||'imported').trim();
+  const mime=String(item?.mime||file?.type||'').toLowerCase();
+  let kind=String(item?.kind||'').toLowerCase();
+  if(!kind){
+    if(mime==='application/json'||/\.json$/i.test(name))kind='json';
+    else if(mime.startsWith('image/')||/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(name))kind='image';
+    else if(mime.startsWith('audio/')||/\.(wav|mp3|ogg|m4a|flac|aac|webm)$/i.test(name))kind='audio';
+    else if(mime.startsWith('text/')||/\.(txt|md|markdown)$/i.test(name))kind='text';
+  }else if(kind==='json'&&/\.(txt|md|markdown)$/i.test(name)){
+    kind='text';
+  }
+
+  if(kind==='json'){
+    if(blob.size>4000000){toast('This backup is too large. Choose a file under 4 MB.');return false}
+    const raw=await blob.text();
+    let firstId='';
+    try{
+      const parsed=JSON.parse(raw);
+      const list=Array.isArray(parsed?.lessons)?parsed.lessons:parsed?.lesson?[parsed.lesson]:Array.isArray(parsed?.lines)?[parsed]:[];
+      firstId=String(list[0]?.id||'');
+    }catch{}
+    const count=library.importBackup(raw);
+    for(const ls of library.data.lessons){
+      if(ls.language!=='es'){
+        for(const ln of ls.lines){if(ln[1]&&!ln[2]&&/[\u3400-\u9fff]/u.test(ln[1]))ln[2]=pinyinFor(ln[1])}
+      }
+    }
+    const target=library.data.lessons.find(l=>l.id===firstId)||library.data.lessons[0];
+    toast(`${count} lesson${count===1?'':'s'} added.`);
+    if(target)navigate('reader',target.id);
+    else renderSaved();
+    return true;
+  }
+
+  if(kind==='text'){
+    if(blob.size>2000000){toast('This text file is too large (over 2 MB).');return false}
+    const raw=await blob.text();
+    const lesson=buildInstantLesson(raw,{filename:name,defaultLang:language,pinyinFn:pinyinFor});
+    if(!lesson)throw new Error('Could not build a lesson from that text file.');
+    try{library.save(lesson)}catch(error){unsaved.set(lesson.id,lesson);toast(error.message)}
+    chosen=true;
+    navigate('reader',lesson.id);
+    toast(`Created lesson "${title(lesson)}".`);
+    return true;
+  }
+
+  if(kind==='image'){
+    let target=current()||allLessons()[0];
+    if(!target)target=ensureStarterLessonForMedia(name,language);
+    await saveLessonCover(target.id,blob,name);
+    if(screen==='reader'&&lessonId===target.id&&!editing)renderReader();
+    else navigate('reader',target.id);
+    toast(`Added cover illustration to “${title(target)}”.`);
+    return true;
+  }
+
+  if(kind==='audio'){
+    let target=current()||allLessons()[0];
+    if(!target)target=ensureStarterLessonForMedia(name,language);
+    const prev=audioClipsByLesson.get(target.id);if(prev?.url)URL.revokeObjectURL(prev.url);
+    audioClipsByLesson.set(target.id,{url:URL.createObjectURL(blob),name});
+    if(screen==='reader'&&lessonId===target.id&&!editing)renderReader();
+    else navigate('reader',target.id);
+    toast(`Attached audio “${name}” to “${title(target)}”.`);
+    return true;
+  }
+
+  throw new Error('Drop a .json lesson backup, .txt/.md notes, image, or audio file.');
+}
+
 function shell(){return `<header class="topbar"><a class="brand" href="#/create" data-nav="create"><img src="/assets/leaf.svg" alt="">lingrove<span>.</span></a><nav aria-label="Main navigation"><button class="nav-button ${screen==='create'?'active':''}" data-nav="create">${icon('plus')}<span>New lesson</span></button><button class="nav-button ${screen==='saved'?'active':''}" data-nav="saved">${icon('book')}<span>Saved<span class="saved-count">${allLessons().length||''}</span></span></button></nav></header><main id="main" tabindex="-1"></main><footer><span>Made by you. Written on your device.</span><button class="text-button" data-action="settings">Settings</button></footer>`}
 function render(){
   $('#app').innerHTML=shell();
@@ -68,7 +418,7 @@ function updateGeneration(){
   el.innerHTML=busy?`<div class="generation-progress"><span class="spinner"></span><div><strong>${ai.status==='ready'?'Writing your lesson':'Preparing your lesson writer'}</strong><span>${Math.floor((Date.now()-genStarted)/1000)}s${generatedChars?' · '+generatedChars+' characters written':' · Keep this page open'}</span></div><button type="button" class="text-button" data-action="stop-generation">Stop</button></div>`:genError?`<div class="error" role="alert">${esc(genError)}</div>`:'';
 }
 function renderSaved(){
-  $('#main').innerHTML=`<section class="saved-page"><div class="page-heading"><div><span class="step-label">YOUR OWN LITTLE LIBRARY</span><h1>Saved <em>lessons.</em></h1><p class="lede">Only the lessons you make. Ready when you are.</p></div><button class="button primary" data-nav="create">${icon('plus')}New lesson</button></div><div class="saved-toolbar"><input id="saved-search" type="search" placeholder="Find a lesson…" aria-label="Search saved lessons" value="${esc(search)}"><details class="menu"><summary>Backups</summary><div><button data-action="export-all">Download all lessons</button><button data-action="import">Import a backup</button></div></details></div><div id="saved-list"></div><p class="form-note">Saved in this browser, with no account needed. Download a backup to keep a copy or move your lessons to another device.</p><input id="backup-file" type="file" accept=".json,application/json" hidden></section>`;
+  $('#main').innerHTML=`<section class="saved-page"><div class="page-heading"><div><span class="step-label">YOUR OWN LITTLE LIBRARY</span><h1>Saved <em>lessons.</em></h1><p class="lede">Only the lessons you make. Ready when you are.</p></div><button class="button primary" data-nav="create">${icon('plus')}New lesson</button></div><div class="saved-toolbar"><input id="saved-search" type="search" placeholder="Find a lesson…" aria-label="Search saved lessons" value="${esc(search)}"><details class="menu"><summary>Backups</summary><div><button data-action="export-all">Download all lessons</button><button data-action="import">Import a backup</button><button data-action="import-text">Import .txt / .md notes</button></div></details></div><div id="saved-list"></div><p class="form-note">Saved in this browser, with no account needed. Download a backup to keep a copy, or drop any .json, .txt, .md, or cover image right onto the page.</p><input id="backup-file" type="file" accept=".json,application/json,.txt,.md,text/plain,text/markdown,image/*,audio/*" hidden></section>`;
   $('#saved-search').oninput=e=>{search=e.target.value;paintSaved()};$('#backup-file').onchange=importFile;paintSaved();
 }
 function paintSaved(){
@@ -79,16 +429,24 @@ function speechButton(key,label,attrs='',small=false){return `<button class="${s
 function renderReader(){
   const l=current();if(!l){$('#main').innerHTML=`<section class="empty"><h1>That lesson isn’t here.</h1><p>Saved lessons stay in the browser where you made them.</p><button class="button primary" data-nav="saved">Your saved lessons</button></section>`;return}
   if(editing){renderEdit(l);return}
+  ensureLessonCoverLoaded(l.id);
+  const cover=coverCache.get(l.id);
+  const audioClip=audioClipsByLesson.get(l.id);
   const isEs=l.language==='es',primary=l.language==='zh'||isEs?1:0,other=1-primary,secondLangAttr=isEs?'es':'zh-CN',secondListen=isEs?'Listen in Spanish':'Listen in Chinese',secondTrans=isEs?'Spanish translation':'Chinese translation';
-  $('#main').innerHTML=`<article class="lesson-reader"><div class="reader-back"><button class="text-button" data-nav="saved">${icon('back')}Saved lessons</button><span class="save-status ${unsaved.has(l.id)?'warning':''}">${unsaved.has(l.id)?'Not saved yet':icon('check')+'Saved on this device'}</span></div><header class="lesson-heading"><span class="step-label">${langName(l.language)} · ${esc(l.level)} · ${l.lines.length} LINES</span><h1>${esc(title(l))}</h1>${l.language==='zh'||isEs?`<p class="subtitle">${esc(l.title)}</p>`:l.zhTitle?`<p class="subtitle" lang="zh-CN">${esc(l.zhTitle)}</p>`:''}</header><div class="reader-actions">${speechButton('all-en','Listen in English','data-read-all="en"')}${isEs?speechButton('all-es','Escuchar en español','data-read-all="es"'):speechButton('all-zh','听中文','data-read-all="zh"')}<details class="menu"><summary aria-label="Lesson actions">More</summary><div><button data-action="edit">Edit lesson</button><button data-action="remix">Customise & create another</button><button data-action="export-text">Download text</button><button data-action="export-lesson">Download backup</button><button data-action="print">Print</button><button class="danger" data-action="delete">Delete lesson</button></div></details></div><div id="speech-status" class="speech-status" aria-live="polite"></div>${unsaved.has(l.id)?'<div class="error">This lesson is not saved. <button class="text-button" data-action="save-again">Try saving again</button> or download a backup from More.</div>':''}<div class="reader-options"><label><input type="checkbox" id="show-translations" ${translations?'checked':''}>Show translations</label>${isEs?'':`<label><input type="checkbox" id="show-pinyin" ${pinyin?'checked':''}>Pinyin</label>`}<button class="text-button" data-action="audio-settings">Voice & speed</button></div><div id="lesson-lines">${l.lines.map((line,i)=>`<section class="lesson-line" data-line="${i}"><span class="line-number">${String(i+1).padStart(2,'0')}</span><div class="line-body"><div class="language-line"><p lang="${primary?secondLangAttr:'en'}">${esc(line[primary]||'Text not added yet.')}</p>${line[primary]?speechButton(`line-${i}-${primary}`,primary?secondListen:'Listen in English',`data-read-line="${i}" data-field="${primary}"`,true):''}</div>${primary===1&&!isEs&&pinyin?`<p class="pinyin">${esc(line[2])}</p>`:''}<details class="translation" ${translations?'open':''}><summary>${other?secondTrans:'English translation'}</summary><div class="language-line"><p lang="${other?secondLangAttr:'en'}">${esc(line[other]||'Add a translation with Edit lesson.')}</p>${line[other]?speechButton(`line-${i}-${other}`,other?secondListen:'Listen in English',`data-read-line="${i}" data-field="${other}"`,true):''}</div>${other===1&&!isEs&&pinyin?`<p class="pinyin">${esc(line[2])}</p>`:''}</details></div></section>`).join('')}</div><div class="lesson-end"><p>Made for your curiosity.<br><span>AI can make mistakes. You can edit every line.</span></p><button class="button primary" data-nav="create">${icon('plus')}Make another lesson</button></div></article>`;
+  $('#main').innerHTML=`<article class="lesson-reader"><div class="reader-back"><button class="text-button" data-nav="saved">${icon('back')}Saved lessons</button><span class="save-status ${unsaved.has(l.id)?'warning':''}">${unsaved.has(l.id)?'Not saved yet':icon('check')+'Saved on this device'}</span></div><header class="lesson-heading">${cover?`<figure class="lesson-cover"><img src="${esc(cover.url)}" alt="${esc(title(l))} cover illustration"></figure>`:''}<span class="step-label">${langName(l.language)} · ${esc(l.level)} · ${l.lines.length} LINES</span><h1>${esc(title(l))}</h1>${l.language==='zh'||isEs?`<p class="subtitle">${esc(l.title)}</p>`:l.zhTitle?`<p class="subtitle" lang="zh-CN">${esc(l.zhTitle)}</p>`:''}</header><div class="reader-actions">${speechButton('all-en','Listen in English','data-read-all="en"')}${isEs?speechButton('all-es','Escuchar en español','data-read-all="es"'):speechButton('all-zh','听中文','data-read-all="zh"')}<details class="menu"><summary aria-label="Lesson actions">More</summary><div><button data-action="share-modal">Send to App…</button><button data-action="export-wav">Download audio (.wav)</button><button data-action="export-png">Download flashcard (.png)</button><button data-action="attach-cover">${cover?'Change cover image':'Add cover image'}</button>${cover?'<button data-action="remove-cover">Remove cover image</button>':''}<hr><button data-action="edit">Edit lesson</button><button data-action="remix">Customise & create another</button><button data-action="export-text">Download text</button><button data-action="export-lesson">Download backup</button><button data-action="print">Print</button><button class="danger" data-action="delete">Delete lesson</button></div></details></div>${audioClip?`<div class="imported-audio"><span>${icon('sound')} ${esc(audioClip.name)}</span><audio controls src="${esc(audioClip.url)}"></audio></div>`:''}<div id="speech-status" class="speech-status" aria-live="polite"></div>${unsaved.has(l.id)?'<div class="error">This lesson is not saved. <button class="text-button" data-action="save-again">Try saving again</button> or download a backup from More.</div>':''}<div class="reader-options"><label><input type="checkbox" id="show-translations" ${translations?'checked':''}>Show translations</label>${isEs?'':`<label><input type="checkbox" id="show-pinyin" ${pinyin?'checked':''}>Pinyin</label>`}<button class="text-button" data-action="audio-settings">Voice & speed</button></div><div id="lesson-lines">${l.lines.map((line,i)=>`<section class="lesson-line" data-line="${i}"><span class="line-number">${String(i+1).padStart(2,'0')}</span><div class="line-body"><div class="language-line"><p lang="${primary?secondLangAttr:'en'}">${esc(line[primary]||'Text not added yet.')}</p>${line[primary]?speechButton(`line-${i}-${primary}`,primary?secondListen:'Listen in English',`data-read-line="${i}" data-field="${primary}"`,true):''}</div>${primary===1&&!isEs&&pinyin?`<p class="pinyin">${esc(line[2])}</p>`:''}<details class="translation" ${translations?'open':''}><summary>${other?secondTrans:'English translation'}</summary><div class="language-line"><p lang="${other?secondLangAttr:'en'}">${esc(line[other]||'Add a translation with Edit lesson.')}</p>${line[other]?speechButton(`line-${i}-${other}`,other?secondListen:'Listen in English',`data-read-line="${i}" data-field="${other}"`,true):''}</div>${other===1&&!isEs&&pinyin?`<p class="pinyin">${esc(line[2])}</p>`:''}</details></div></section>`).join('')}</div><div class="lesson-end"><p>Made for your curiosity.<br><span>AI can make mistakes. You can edit every line.</span></p><button class="button primary" data-nav="create">${icon('plus')}Make another lesson</button></div><input id="cover-file" type="file" accept="image/*" hidden></article>`;
   $('#show-translations').onchange=e=>{translations=e.target.checked;preferences({showTranslations:translations});$$('.translation').forEach(d=>d.open=translations)};
   if($('#show-pinyin'))$('#show-pinyin').onchange=e=>{pinyin=e.target.checked;preferences({showPinyin:pinyin});renderReader();updateSpeech()};
+  $('#cover-file').onchange=async e=>{const file=e.target.files?.[0];e.target.value='';if(!file)return;try{await handleIncomingAsset({file},{source:'picker'})}catch(err){toast(err.message)}};
 }
 function renderEdit(l){
   $('#main').innerHTML=`<section class="editor"><div class="page-heading"><div><span class="step-label">MAKE IT YOUR OWN</span><h1>Edit your <em>lesson.</em></h1></div></div><form id="edit-form" class="surface"><div class="custom-grid"><label>English title<input id="edit-title" maxlength="120" required value="${esc(l.title)}"></label><label>${l.language==='es'?'Spanish title':'Chinese title'}<input id="edit-zh-title" maxlength="120" value="${esc(l.zhTitle)}"></label></div>${l.lines.map((line,i)=>`<fieldset><legend>Line ${i+1}</legend><label>English<textarea data-edit-en="${i}" maxlength="2000" rows="2">${esc(line[0])}</textarea></label><label>${l.language==='es'?'Español':'中文'}<textarea data-edit-zh="${i}" maxlength="2000" rows="2">${esc(line[1])}</textarea></label></fieldset>`).join('')}<div id="edit-error" role="alert"></div><div class="button-row"><button class="button primary" type="submit">${icon('check')}Save changes</button><button class="button secondary" type="button" data-action="cancel-edit">Cancel</button></div></form></section>`;
   $('#edit-form').onsubmit=e=>{e.preventDefault();const changed={...l,title:$('#edit-title').value.trim(),zhTitle:$('#edit-zh-title').value.trim(),updatedAt:Date.now(),lines:l.lines.map((_,i)=>{const en=$(`[data-edit-en="${i}"]`).value.trim(),zh=$(`[data-edit-zh="${i}"]`).value.trim();return [en,zh,zh&&l.language!=='es'?pinyinFor(zh):'']})};if(changed.lines.some(line=>!line[0]&&!line[1])){$('#edit-error').textContent='Each line needs text in at least one language.';return}try{library.save(changed);unsaved.delete(l.id);editing=false;render();toast('Changes saved.')}catch(error){$('#edit-error').textContent=error.message}};
 }
-function modal(title,body){const d=$('#modal');d.innerHTML=`<div class="modal-header"><h2>${title}</h2><button class="icon-button" data-action="close-modal" aria-label="Close">${icon('close')}</button></div>${body}`;if(!d.open)d.showModal();d.scrollTop=0}
+function modal(titleText,body){const d=$('#modal');d.innerHTML=`<div class="modal-header"><h2>${titleText}</h2><button class="icon-button" data-action="close-modal" aria-label="Close">${icon('close')}</button></div>${body}`;if(!d.open)d.showModal();d.scrollTop=0}
+function shareModal(l){
+  if(!l)return;
+  modal('Share & send lesson.',`<div class="share-section"><h3>Bilingual flashcard poster (.png)</h3><p>Crisp 1080×1350 card with bilingual lines, pinyin, and cover art.</p><div class="share-grid"><button class="share-chip primary-chip" data-action="export-png">${icon('download')}Download .PNG</button>${PNG_SEND_TARGETS.map(id=>`<button class="share-chip" data-send-png="${id}">${icon('send')}${esc(RF_APPS[id].name)}</button>`).join('')}</div></div><div class="share-section"><h3>Spoken lesson audio (.wav)</h3><p>Offline bilingual narration synthesized directly on your device.</p><div class="share-grid"><button class="share-chip primary-chip" data-action="export-wav">${icon('download')}Download .WAV</button>${WAV_SEND_TARGETS.map(id=>`<button class="share-chip" data-send-wav="${id}">${icon('send')}${esc(RF_APPS[id].name)}</button>`).join('')}</div></div><div id="share-modal-status" class="speech-status" aria-live="polite"></div>`);
+}
 function audioSettings(){
   modal('Make yourself heard.',`<p>Hear the lesson and its translation separately.</p><label class="field-label">Voice<select id="voice-mode"><option value="auto" ${speechSettings.mode==='auto'?'selected':''}>Automatic · device voice when available</option><option value="basic" ${speechSettings.mode==='basic'?'selected':''}>Basic voice · works without installed voices</option></select></label><p class="form-note">The basic voice sounds robotic but works on your device. Its audio files download the first time you use it.</p><label class="field-label">Speed <output id="rate-label">${speechSettings.rate}×</output><input id="speech-rate" type="range" min="0.6" max="1.2" step="0.05" value="${speechSettings.rate}"></label><div class="button-row">${speechButton('test-en','Test English','data-test-voice="en"')}${speechButton('test-zh','测试中文','data-test-voice="zh"')}${speechButton('test-es','Probar español','data-test-voice="es"')}</div><div id="modal-speech-status" class="speech-status" aria-live="polite"></div><p class="form-note">If you still hear nothing, turn up your phone’s media volume and check Bluetooth headphones or silent mode.</p>`);
   $('#voice-mode').onchange=e=>{speechSettings.mode=e.target.value;stopSpeech();preferences({speech:speechSettings})};$('#speech-rate').oninput=e=>{speechSettings.rate=Number(e.target.value);$('#rate-label').textContent=speechSettings.rate+'×';preferences({speech:speechSettings})};updateSpeech();
@@ -118,7 +476,50 @@ function updateSpeech(){
   for(const button of $$('[data-speech-key]')){const active=speech.key===button.dataset.speechKey&&['loading','speaking'].includes(speech.status);button.classList.toggle('playing',active);button.setAttribute('aria-pressed',String(active));const label=button.getAttribute('aria-label');button.innerHTML=icon(active?'stop':'sound')+`<span>${active?(speech.status==='loading'?'Preparing…':'Stop'):esc(label)}</span>`}
 }
 function download(name,text,type='text/plain;charset=utf-8'){const url=URL.createObjectURL(new Blob([text],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
-async function importFile(e){const file=e.target.files?.[0];if(!file)return;try{if(file.size>4000000)throw new Error('This backup is too large. Choose a file under 4 MB.');const count=library.importBackup(await file.text());toast(`${count} lesson${count===1?'':'s'} added.`);renderSaved()}catch(error){toast(error.message)}}
+async function importFile(e){
+  const file=e.target.files?.[0];e.target.value='';
+  if(!file)return;
+  const isJson=file.type==='application/json'||/\.json$/i.test(file.name);
+  try{
+    if(isJson){
+      if(file.size>4000000)throw new Error('This backup is too large. Choose a file under 4 MB.');
+      const count=library.importBackup(await file.text());
+      toast(`${count} lesson${count===1?'':'s'} added.`);
+      renderSaved();
+      return;
+    }
+    await handleIncomingAsset({file},{source:'picker'});
+  }catch(error){toast(error.message)}
+}
+
+async function exportCurrentWav(l){
+  if(!l)return;
+  const fname=`${slugify(l.title)}-lesson.wav`;
+  setShareStatus('Synthesizing offline spoken WAV…');
+  try{
+    const blob=await renderLessonWav(l,{lang:'bilingual',rate:speechSettings.rate});
+    triggerDownload(blob,fname);
+    setShareStatus('');
+    toast(`Downloaded ${fname}.`);
+  }catch(err){
+    setShareStatus('');
+    toast(err?.message||'Could not export spoken WAV.');
+  }
+}
+async function exportCurrentPng(l){
+  if(!l)return;
+  const fname=`${slugify(l.title)}-flashcard.png`;
+  setShareStatus('Rendering 1080×1350 flashcard PNG…');
+  try{
+    const blob=await renderLessonCardPng(l);
+    triggerDownload(blob,fname);
+    setShareStatus('');
+    toast(`Downloaded ${fname}.`);
+  }catch(err){
+    setShareStatus('');
+    toast(err?.message||'Could not export flashcard PNG.');
+  }
+}
 
 document.addEventListener('click',e=>{
   const el=e.target.closest('button,a');if(!el)return;
@@ -129,8 +530,45 @@ document.addEventListener('click',e=>{
   if(el.dataset.readAll){const l=current(),lang=el.dataset.readAll;if(l)read(l.lines.map(line=>({text:line[lang==='en'?0:1],lang})),el.dataset.speechKey);return}
   if(el.hasAttribute('data-read-line')){const l=current(),field=Number(el.dataset.field),line=l?.lines[Number(el.dataset.readLine)];if(line)read([{text:line[field],lang:field?(l.language==='es'?'es':'zh'):'en'}],el.dataset.speechKey);return}
   if(el.dataset.testVoice){const lang=el.dataset.testVoice;read([{text:lang==='zh'?'你好！我们一起学习中文。':lang==='es'?'¡Hola! Vamos a aprender español juntos.':'Hello! Let’s learn something new.',lang}],el.dataset.speechKey);return}
-  const l=current();switch(el.dataset.action){
+  if(el.dataset.sendPng){
+    const l=current(),target=el.dataset.sendPng;
+    if(l&&RF_APPS[target]){
+      const fname=`${slugify(l.title)}-flashcard.png`;
+      setShareStatus(`Sending flashcard poster to ${RF_APPS[target].name}…`);
+      void sendToRfApp({
+        from:'lingrove',
+        to:target,
+        kind:'image',
+        onStatus:msg=>{setShareStatus(msg);toast(msg)},
+        producePayload:async()=>({blob:await renderLessonCardPng(l),name:fname,mime:'image/png',meta:{title:title(l),language:l.language}}),
+      }).catch(err=>{setShareStatus('');toast(err?.message||'Could not send flashcard PNG.')});
+    }
+    return;
+  }
+  if(el.dataset.sendWav){
+    const l=current(),target=el.dataset.sendWav;
+    if(l&&RF_APPS[target]){
+      const fname=`${slugify(l.title)}-lesson.wav`;
+      setShareStatus(`Synthesizing & sending WAV to ${RF_APPS[target].name}…`);
+      void sendToRfApp({
+        from:'lingrove',
+        to:target,
+        kind:'audio',
+        onStatus:msg=>{setShareStatus(msg);toast(msg)},
+        producePayload:async()=>({blob:await renderLessonWav(l,{lang:'bilingual',rate:speechSettings.rate}),name:fname,mime:'audio/wav',meta:{title:title(l),language:l.language}}),
+      }).catch(err=>{setShareStatus('');toast(err?.message||'Could not send spoken WAV.')});
+    }
+    return;
+  }
+  const l=current();
+  const openMenu=el.closest('details.menu');
+  switch(el.dataset.action){
     case 'settings':settings();break;
+    case 'share-modal':if(l)shareModal(l);break;
+    case 'export-wav':if(l)void exportCurrentWav(l);break;
+    case 'export-png':if(l)void exportCurrentPng(l);break;
+    case 'attach-cover':$('#cover-file')?.click();break;
+    case 'remove-cover':if(l)void deleteLessonCover(l.id).then(()=>{renderReader();toast('Cover image removed.')});break;
     case 'copy-app-link':copyAppLink();break;
     case 'audio-settings':audioSettings();break;
     case 'close-modal':$('#modal').close();break;
@@ -147,17 +585,41 @@ document.addEventListener('click',e=>{
     case 'export-text':if(l)download('lingrove-lesson.txt',lessonText(l));break;
     case 'export-lesson':if(l)download('lingrove-lesson.json',backup([l]),'application/json');break;
     case 'export-all':download('lingrove-lessons.json',backup(allLessons()),'application/json');break;
-    case 'import':$('#backup-file').click();break;
+    case 'import':
+    case 'import-text':$('#backup-file').click();break;
     case 'print':window.print();break;
-    case 'delete':if(l&&confirm(`Delete “${title(l)}” from this browser?`)){try{library.remove(l.id);unsaved.delete(l.id);navigate('saved');toast('Lesson deleted.')}catch(error){toast(error.message)}}break;
+    case 'delete':if(l&&confirm(`Delete “${title(l)}” from this browser?`)){try{library.remove(l.id);unsaved.delete(l.id);void deleteLessonCover(l.id);navigate('saved');toast('Lesson deleted.')}catch(error){toast(error.message)}}break;
   }
+  if(openMenu&&el.dataset.action)openMenu.open=false;
 });
+
+window.addEventListener('dragover',e=>{if(e.dataTransfer?.types?.includes('Files'))e.preventDefault()});
+window.addEventListener('drop',e=>{
+  const file=e.dataTransfer?.files?.[0];
+  if(!file)return;
+  e.preventDefault();
+  handleIncomingAsset({file},{source:'drop'}).catch(err=>toast(err?.message||'Could not import file.'));
+});
+
 subscribeAI(updateAI);subscribeSpeech(updateSpeech);setInterval(()=>{if(busy)updateGeneration()},1000);
 window.addEventListener('popstate',()=>{const next=route();editing=false;stopSpeech();screen=next.screen;lessonId=next.id;render()});
 window.addEventListener('pagehide',()=>stopSpeech());
 const initial=route();
-if(initial.screen==='reader'||initial.screen==='saved'){screen=initial.screen;lessonId=initial.id}else screen='setup';
+if(initial.screen==='reader'||initial.screen==='saved'){
+  screen=initial.screen;lessonId=initial.id;
+}else if(hasRfBoot){
+  const existing=allLessons()[0];
+  if(existing){screen='reader';lessonId=existing.id}
+  else screen='saved';
+}else{
+  screen='setup';
+}
 render();if(library.readError)toast(library.readError);
-// The owner requested automatic first-visit downloading. Cached model files are reused.
-startSetup();
+installRfImportReceiver({
+  appId:'lingrove',
+  accepts:['image','json','audio'],
+  onImport:pkt=>handleIncomingAsset(pkt,{source:'rf'}).catch(err=>toast(err?.message||'Import failed.')),
+});
+// Automatic first-visit downloading unless opened via cross-app rf-bridge import (so incoming assets jump straight to reader).
+if(!hasRfBoot)startSetup();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).catch(()=>{});

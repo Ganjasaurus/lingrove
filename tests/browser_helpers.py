@@ -1,5 +1,5 @@
 from playwright.sync_api import expect
-import os
+import os,tempfile
 BASE=os.environ.get('LINGROVE_TEST_URL','http://127.0.0.1:4173/')
 MOCK_CPU='''
 export const PHONE_MODEL={id:'qwen-test'};
@@ -12,8 +12,29 @@ export const createPhoneEngine=()=>({
 '''
 def mock_cpu(context):
  context.route('**/vendor/cpu.js*',lambda r:r.fulfill(content_type='text/javascript',body=MOCK_CPU))
+def _wrap_win_scratch(b):
+ if os.name!='nt' or os.path.exists('/workspace/scratch'):return b
+ orig_ctx=b.new_context
+ def new_context(*a,**kw):
+  c=orig_ctx(*a,**kw);orig_page=c.new_page
+  def new_page(*pa,**pkw):
+   pg=orig_page(*pa,**pkw);orig_shot=pg.screenshot
+   def screenshot(*sa,**skw):
+    p=skw.get('path')
+    if isinstance(p,str) and p.startswith('/workspace/scratch/'):
+     d=os.environ.get('LINGROVE_SCRATCH_DIR') or os.path.join(tempfile.gettempdir(),'lingrove-scratch')
+     os.makedirs(d,exist_ok=True);skw['path']=os.path.join(d,os.path.basename(p))
+    return orig_shot(*sa,**skw)
+   pg.screenshot=screenshot;return pg
+  c.new_page=new_page;return c
+ b.new_context=new_context;return b
 def launch(p):
- return p.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox'])
+ if os.path.exists('/usr/bin/chromium'):
+  return p.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox'])
+ try:
+  return _wrap_win_scratch(p.chromium.launch(headless=True))
+ except Exception:
+  return _wrap_win_scratch(p.chromium.launch(channel='msedge',headless=True))
 def mobile(browser,script=''):
  c=browser.new_context(viewport={'width':393,'height':852},is_mobile=True,has_touch=True,service_workers='block')
  c.add_init_script("Object.defineProperty(navigator,'gpu',{value:undefined});"+script);mock_cpu(c);return c

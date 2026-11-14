@@ -10,12 +10,13 @@ with sync_playwright() as p:
  # Reading and speech must remain usable even when model download is unavailable.
  c.route('**/*huggingface.co/**',lambda r:r.abort());c.route('**/*hf.co/**',lambda r:r.abort())
  q=c.new_page();errors=[];q.on('pageerror',lambda e:errors.append(str(e)));q.goto(BASE+'#/read/offline');expect(q.locator('.lesson-heading h1')).to_have_text('Offline lesson');q.evaluate('navigator.serviceWorker.ready');q.wait_for_function('!!navigator.serviceWorker.controller');q.locator('[data-read-line="0"][data-field="1"]').click();expect(q.locator('#speech-status')).to_have_text('Finished playing.',timeout=20000)
- urls=q.evaluate("async()=>{const c=await caches.open('lingrove-shell-v6');return(await c.keys()).map(r=>new URL(r.url).pathname+new URL(r.url).search)}")
- for path in ['/app.js?v=6','/lessons.js?v=6','/speech.js?v=6','/speech-worker.js?v=6','/vendor/speech/espeak-ng.js','/vendor/speech/espeak-ng.data']:assert path in urls,(path,urls)
+ urls=q.evaluate("async()=>{const c=await caches.open('lingrove-shell-v9');return(await c.keys()).map(r=>new URL(r.url).pathname+new URL(r.url).search)}")
+ for path in ['/app.js?v=6','/rf-bridge.js?v=6','/lessons.js?v=6','/speech.js?v=6','/speech-worker.js?v=6','/vendor/speech/espeak-ng.js','/vendor/speech/espeak-ng.data']:assert path in urls,(path,urls)
  print('Versioned app shell and real voice runtime/data cached',flush=True)
  c.set_offline(True);q.reload();expect(q.locator('.lesson-heading h1')).to_have_text('Offline lesson')
  for field in (0,1):
   q.locator('[data-read-line="0"][data-field="'+str(field)+'"]').click();expect(q.locator('#speech-status')).to_have_text('Finished playing.',timeout=15000)
+ q.goto(BASE+'?rf_import=1#/read/offline');expect(q.locator('.lesson-heading h1')).to_have_text('Offline lesson')
  print('Saved lesson, English audio and Mandarin audio work after offline reload',flush=True)
  assert not errors,errors
  b.close();print(json.dumps({'passed':4,'errors':errors}))
