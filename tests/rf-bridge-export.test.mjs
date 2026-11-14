@@ -10,7 +10,7 @@ import {
 } from '../dist/rf-bridge.js';
 import { encodeWavPcm16, lessonSpeechItems, renderLessonWav } from '../dist/speech.js';
 import { LessonStore, buildInstantLesson } from '../dist/lessons.js';
-import { pinyinFor } from '../dist/vendor/language.js';
+import { pinyinFor } from '../src/language.js';
 
 test('rf-bridge v1 resolves target URLs, MASQUE coopRelay, and completes synchronous window.open + rf:ack', async () => {
   assert.deepEqual(RF_APPS.lingrove.accepts, ['audio', 'json', 'image']);
